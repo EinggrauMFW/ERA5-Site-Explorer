@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ECMWF Site Explorer</title>
+    <link rel="preconnect" href="https://tiles.openfreemap.org">
+    <link href="https://unpkg.com/maplibre-gl@5.7.3/dist/maplibre-gl.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='app.css') }}" rel="stylesheet">
+  </head>
+  <body>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">ERA5 · Wave resource data</p>
+        <h1>Choose a site.<br>Bring the ocean into focus.</h1>
+        <p class="lede">Click the map to define a study point, choose a date range, and retrieve monthly ECMWF ERA5 wave and wind fields from Copernicus CDS.</p>
+      </section>
+
+      <section class="workspace">
+        <div class="map-wrap">
+          <div id="map"></div>
+          <div class="map-note" id="map-note">Click anywhere to place your site</div>
+        </div>
+
+        <form id="fetch-form">
+          <div class="form-heading">
+            <span>01</span>
+            <h2>Site request</h2>
+          </div>
+          <div class="coordinates">
+            <label>Latitude<input id="latitude" name="latitude" type="number" min="-90" max="90" step="any" value="-6.9175" required></label>
+            <label>Longitude<input id="longitude" name="longitude" type="number" min="-180" max="180" step="any" value="107.6191" required></label>
+          </div>
+          <div class="selection-readout" aria-live="polite">
+            <span>Selected study point</span>
+            <strong id="selected-coordinate">−6.91750, 107.61910</strong>
+            <small id="selected-area">Loading study area…</small>
+          </div>
+          <div class="coordinates">
+            <label>Start date<input id="start" name="start" type="date" required></label>
+            <label>End date<input id="end" name="end" type="date" required></label>
+          </div>
+          <label>Area buffer <span class="unit">degrees</span><input id="buffer" name="buffer" type="number" min="0" max="10" step="0.1" value="0.5" required></label>
+          <label class="check"><input id="dry-run" type="checkbox"><span>Preview request only (no CDS download)</span></label>
+          <button id="submit" type="submit">Fetch ERA5 data <span>↗</span></button>
+          <p class="hint">Downloads require a configured <code>~/.cdsapirc</code> and accepted ERA5 licence.</p>
+        </form>
+      </section>
+
+      <section id="status-card" class="status-card" hidden>
+        <div class="form-heading"><span>02</span><h2>Request status</h2></div>
+        <div class="status-line"><strong id="status">Queued</strong><span id="job-id"></span></div>
+        <pre id="log"></pre>
+        <div id="files" class="files"></div>
+      </section>
+
+      <section id="analysis" class="analysis" hidden>
+        <div class="form-heading"><span>03</span><h2>Wave analysis</h2></div>
+        <div id="analysis-meta" class="analysis-meta"></div>
+        <div id="metrics" class="metrics"></div>
+        <div id="charts" class="charts"></div>
+      </section>
+    </main>
+    <script src="https://unpkg.com/maplibre-gl@5.7.3/dist/maplibre-gl.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

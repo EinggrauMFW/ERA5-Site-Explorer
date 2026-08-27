@@ -1,0 +1,4 @@
+Flask>=3.0,<4
+cdsapi>=0.7,<1
+xarray>=2025.1
+netCDF4>=1.7
