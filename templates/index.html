@@ -11,6 +11,9 @@
     <link href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css" rel="stylesheet"
           integrity="sha384-IfV0B7MIOYuO95kO9G5ySKPz/85zqFNOAs8iy4tkK5zd9izhJAB8b7lHrwYqqmYE" crossorigin="anonymous">
     <link href="{{ url_for('static', filename='app.css') }}" rel="stylesheet">
+    {%- for name in plugin_styles %}
+    <link href="{{ url_for('static', filename='plugins/' + name + '.css') }}" rel="stylesheet">
+    {%- endfor %}
     <script>
       /* Apply a saved theme before first paint so there is no flash. */
       try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
@@ -141,7 +144,7 @@
         <div class="card-head">
           <span class="step">03</span>
           <h2>Wave analysis</h2>
-          <div class="head-actions">
+          <div id="head-actions" class="head-actions">
             <a id="csv-link" class="btn ghost" href="#" download>↓ Time series CSV</a>
             <a id="prov-link" class="btn ghost" href="#" target="_blank" rel="noopener">provenance.json</a>
           </div>
@@ -220,5 +223,8 @@
             integrity="sha384-XMP23k7YSCFr13Xrkxh4IO0v1W+8fB6AP+3Vycxphp2Z0V2vocAZHyuGaFCysrtM" crossorigin="anonymous"></script>
     <script id="product-config" type="application/json">{{ {'defaultSteps': default_steps, 'maxBuffer': max_buffer, 'maxYears': max_years}|tojson }}</script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
+    {%- for name in plugin_scripts %}
+    <script src="{{ url_for('static', filename='plugins/' + name + '.js') }}"></script>
+    {%- endfor %}
   </body>
 </html>

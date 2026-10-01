@@ -121,13 +121,16 @@ map.on('click', event => {
 marker.on('dragend', () => { const p = marker.getLngLat(); setCoordinates(p.lng, p.lat); });
 let nodeHandlersAdded = false;
 
+let layerRetries = 0;
+
 function addMapLayers() {
-  // Safe to call repeatedly: it does nothing until the (possibly replaced) style accepts layers.
-  try { addMapLayersNow(); hideMapLoader(); } catch (error) { /* the next style event retries */ }
+  // Safe to call repeatedly. A replaced style may not accept layers yet, so retry for a few seconds.
+  try { addMapLayersNow(); hideMapLoader(); layerRetries = 0; }
+  catch (error) { if (layerRetries++ < 40) setTimeout(addMapLayers, 250); }
 }
 
 function addMapLayersNow() {
-  if (!map.getStyle()) return;
+  if (!map.getStyle()) throw new Error('style not ready');
   if (!map.getSource('study-area')) {
     map.addSource('study-area', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({ id:'study-area-fill', type:'fill', source:'study-area', paint:{ 'fill-color':'#c9ff4a', 'fill-opacity':0.18 } });
@@ -172,8 +175,15 @@ setTimeout(() => {
     const background = getComputedStyle(document.documentElement).getPropertyValue('--sea-soft').trim() || '#d6e8dd';
     map.setStyle({ version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': background } }] });
     $('#map-note').textContent = 'Basemap unavailable: showing grid only. Click to place your site';
+    // The study box and node layers belong to the style that was just replaced: add them again, and
+    // keep checking until they exist, because the new style is not ready to accept layers immediately.
+    let tries = 0;
+    const timer = setInterval(() => {
+      if ((map.getLayer('nodes-circle') && map.getLayer('study-area-fill')) || ++tries > 40) { clearInterval(timer); return; }
+      addMapLayers();
+    }, 300);
   }
-}, 5000);
+}, 8000);
 
 [latInput, lonInput].forEach(input => input.addEventListener('change', () => {
   const lat = Number(latInput.value), lng = Number(lonInput.value);
@@ -354,6 +364,9 @@ const NODE_METRICS = {
   value: { label: 'Mean value', short: 'Mean' }
 };
 
+let nodeColours = null;   // {label, values: {"lat,lon": number}} set by a plugin, or null for the built-in metric
+const nodeKey = (lat, lon) => `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+
 function nodeAt(lat, lon) {
   return nodeData && nodeData.nodes.find(n => Math.abs(n.lat - lat) < 1e-3 && Math.abs(n.lon - lon) < 1e-3);
 }
@@ -372,10 +385,12 @@ function renderNodesOnMap() {
   if (!source) return;
   const legend = $('#map-legend');
   if (!nodeData) { source.setData({ type: 'FeatureCollection', features: [] }); legend.hidden = true; return; }
-  const values = nodeData.nodes.filter(n => n.valid && n[nodeMetric] != null).map(n => n[nodeMetric]);
+  const read = n => nodeColours ? nodeColours.values[nodeKey(n.lat, n.lon)] : n[nodeMetric];
+  const values = nodeData.nodes.filter(n => n.valid && read(n) != null && Number.isFinite(read(n))).map(read);
   const low = Math.min(...values), high = Math.max(...values);
   legend.hidden = !values.length;
-  $('#legend-label').textContent = nodeMetric === 'value' && nodeData.value_label ? nodeData.value_label : NODE_METRICS[nodeMetric].label;
+  $('#legend-label').textContent = nodeColours ? nodeColours.label
+    : nodeMetric === 'value' && nodeData.value_label ? nodeData.value_label : NODE_METRICS[nodeMetric].label;
   $('#legend-min').textContent = fmtNum(low);
   $('#legend-max').textContent = fmtNum(high);
   source.setData({ type: 'FeatureCollection', features: nodeData.nodes.map(n => ({
@@ -383,7 +398,7 @@ function renderNodesOnMap() {
     geometry: { type: 'Point', coordinates: [n.lon, n.lat] },
     properties: {
       lat: n.lat, lon: n.lon, valid: n.valid,
-      scaled: n.valid && n[nodeMetric] != null && high > low ? (n[nodeMetric] - low) / (high - low) : 0,
+      scaled: n.valid && read(n) != null && Number.isFinite(read(n)) && high > low ? (read(n) - low) / (high - low) : 0,
       selected: !!highlightNode && Math.abs(n.lat - highlightNode.lat) < 1e-3 && Math.abs(n.lon - highlightNode.lon) < 1e-3
     }
   })) });
@@ -563,9 +578,33 @@ const TAB_LABELS = {
   overview: 'Overview', distributions: 'Distributions', direction: 'Direction', quality: 'Quality',
   series: 'Time series', nodes: 'Grid nodes', notes: 'Notes & limits'
 };
+const BUILT_IN_BEFORE_PLUGINS = ['overview', 'distributions', 'direction', 'quality', 'series', 'nodes'];
+const pluginTabs = [];          // {id, label, order, available(ctx), mount(panel, ctx)}
+const pluginActions = [];       // {id, label, order, href(ctx)}
+let lastAnalysis = null;        // the analysis payload on screen
+let mountedPlugins = new Set(); // plugin tabs mounted for the analysis on screen
 let currentTab = 'overview';
 
+function pluginContext() {
+  return {
+    jobId: activeJob, product: lastAnalysis ? lastAnalysis.product : null, route: lastAnalysis ? lastAnalysis.route : null,
+    node: selectedNode, analysis: lastAnalysis, nodeData
+  };
+}
+
+function tabOrder() {
+  const plugins = pluginTabs.slice().sort((a, b) => (a.order ?? 100) - (b.order ?? 100)).map(tab => tab.id);
+  return [...BUILT_IN_BEFORE_PLUGINS, ...plugins, 'notes'];
+}
+
+function tabLabel(id) {
+  const plugin = pluginTabs.find(tab => tab.id === id);
+  return plugin ? plugin.label : TAB_LABELS[id];
+}
+
 function panelHasContent(id) {
+  const plugin = pluginTabs.find(tab => tab.id === id);
+  if (plugin) return plugin.available ? !!plugin.available(pluginContext()) : true;
   const panel = $(`#panel-${id}`);
   if (id === 'series') return $('#charts').children.length > 0 || !$('#advanced').hidden;
   if (id === 'nodes') return !!nodeData;
@@ -574,8 +613,21 @@ function panelHasContent(id) {
   return panel.querySelector('.sections').children.length > 0 || id === 'overview';
 }
 
+function ensurePluginPanel(id) {
+  let panel = $(`#panel-${id}`);
+  if (!panel) {
+    panel = node('div', 'panel');
+    panel.id = `panel-${id}`;
+    panel.dataset.panel = id;
+    panel.setAttribute('role', 'tabpanel');
+    panel.hidden = true;
+    $('.panels').append(panel);
+  }
+  return panel;
+}
+
 function activateTab(id, focus = false) {
-  const available = Object.keys(TAB_LABELS).filter(panelHasContent);
+  const available = tabOrder().filter(panelHasContent);
   currentTab = available.includes(id) ? id : 'overview';
   document.querySelectorAll('#analysis-tabs .tab').forEach(tab => {
     const on = tab.dataset.tab === currentTab;
@@ -584,14 +636,23 @@ function activateTab(id, focus = false) {
     if (on && focus) tab.focus();
   });
   document.querySelectorAll('.panels .panel').forEach(panel => { panel.hidden = panel.dataset.panel !== currentTab; });
+  const plugin = pluginTabs.find(tab => tab.id === currentTab);
+  if (plugin && !mountedPlugins.has(plugin.id)) {   // plugin tabs are built the first time they are shown
+    mountedPlugins.add(plugin.id);
+    const panel = ensurePluginPanel(plugin.id);
+    panel.replaceChildren();
+    try { plugin.mount(panel, pluginContext()); }
+    catch (error) { panel.replaceChildren(node('p', 'form-error', `${plugin.label} failed to load: ${error.message}`)); }
+  }
   requestAnimationFrame(() => requestAnimationFrame(resizeCharts));
 }
 
 function renderTabs() {
-  const available = Object.keys(TAB_LABELS).filter(panelHasContent);
+  const available = tabOrder().filter(panelHasContent);
+  pluginTabs.forEach(tab => ensurePluginPanel(tab.id));
   const tabs = $('#analysis-tabs');
   tabs.replaceChildren(...available.map(id => {
-    const tab = node('button', 'tab', TAB_LABELS[id]);
+    const tab = node('button', 'tab', tabLabel(id));
     tab.type = 'button';
     tab.id = `tab-${id}`;
     tab.dataset.tab = id;
@@ -607,7 +668,23 @@ function renderTabs() {
     return tab;
   }));
   document.querySelectorAll('.panels .panel').forEach(panel => panel.setAttribute('aria-labelledby', `tab-${panel.dataset.panel}`));
+  renderActions();
   activateTab(currentTab);
+}
+
+function renderActions() {
+  const holder = $('#head-actions');
+  holder.querySelectorAll('[data-plugin-action]').forEach(el => el.remove());
+  const context = pluginContext();
+  pluginActions.slice().sort((a, b) => (a.order ?? 100) - (b.order ?? 100)).forEach(action => {
+    const href = action.href(context);
+    if (!href) return;
+    const link = node('a', 'btn ghost', action.label);
+    link.href = href;
+    link.dataset.pluginAction = action.id;
+    if (action.download !== false) link.setAttribute('download', '');
+    holder.append(link);
+  });
 }
 
 function renderKv(section) {
@@ -792,6 +869,8 @@ async function loadAnalysis(jobId, { scroll = true } = {}) {
     return;
   }
   $('#sector-form').hidden = data.route !== 'wave-spectra';
+  lastAnalysis = data;
+  mountedPlugins = new Set();
   highlightNode = { lat: data.grid_coordinate.latitude, lon: data.grid_coordinate.longitude };
   renderNodesOnMap();
   renderNodePanel();
@@ -985,3 +1064,40 @@ updateNav();
 refreshRecent();
 const hashJob = /^#job=([0-9a-f]{12})$/.exec(location.hash);
 if (hashJob) openJob(hashJob[1]);
+
+
+// --- public API for plugin scripts (static/plugins/*.js) ---------------------------------------------
+window.EraExplorer = {
+  /** Add a tab to the analysis page. mount(panelElement, context) runs once, the first time it is shown. */
+  registerTab(tab) { pluginTabs.push(tab); },
+  /** Add a link to the analysis header. href(context) returns a URL, or null to hide it. */
+  registerAction(action) { pluginActions.push(action); },
+  /** {jobId, product, route, node, analysis, nodeData}: the job and grid node on screen. */
+  context: pluginContext,
+  /** Query string fragment selecting the current grid node ('' for the nearest ocean cell). */
+  nodeQuery,
+  /** fetch() a JSON API path of the current job; the grid node is appended when one is selected. */
+  async api(path, options = {}) {
+    const joiner = path.includes('?') ? '&' : '?';
+    const url = options.noNode || !selectedNode ? path : `${path}${joiner}${nodeQuery()}`;
+    const response = await fetch(url, options);
+    const type = response.headers.get('content-type') || '';
+    const body = type.includes('json') ? await response.json() : await response.text();
+    if (!response.ok) throw new Error((body && body.error) || `Request failed (${response.status})`);
+    return body;
+  },
+  /** Colour the map nodes: spec = {label, values: {"lat,lon": number}} (keys from nodeKey). null resets. */
+  colourNodes(spec) { nodeColours = spec; renderNodesOnMap(); },
+  nodeKey,
+  /** Analyse another grid node (reloads the whole analysis page). */
+  selectNode(lat, lon) { selectNode(nodeAt(lat, lon)); },
+  /** Sizing and colours for uPlot charts; trackChart() makes the chart follow window and tab resizes. */
+  chartTheme,
+  trackChart(chart) { charts.push(chart); return chart; },
+  fmtNum, fmt, node, metric,
+  /** Colour, one value, for categorical series (comparison of several nodes). */
+  palette() {
+    const css = getComputedStyle(document.documentElement);
+    return ['--chart-line', '--chart-accent', '--run', '--danger-ink'].map(name => css.getPropertyValue(name).trim());
+  }
+};

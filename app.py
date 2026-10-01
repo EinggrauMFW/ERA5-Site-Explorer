@@ -22,6 +22,7 @@ from flask import Flask, abort, jsonify, render_template, request, send_file, se
 
 import crosscheck
 import fetch_era5_waves
+import plugins
 from analysis import ANALYSIS_VERSION, analyse, find_node, node_summary, sector_section
 
 
@@ -65,6 +66,14 @@ def json_errors(error: HTTPException):
     if request.path.startswith("/api/"):
         return jsonify(error=error.description or error.name), error.code
     return error
+
+
+@app.errorhandler(ValueError)
+def value_errors(error: ValueError):
+    """Plugin routes raise ValueError for bad input; show it as a 422 like the core routes do."""
+    if request.path.startswith("/api/"):
+        return jsonify(error=str(error)), 422
+    raise error
 
 
 # --- job storage -----------------------------------------------------------------
@@ -266,6 +275,10 @@ def index():
         "index.html",
         latest_date=fetch_era5_waves.latest_available().isoformat(),
         earliest_date=fetch_era5_waves.EARLIEST.isoformat(),
+        plugin_scripts=[name for name in ("device", "screening", "longterm", "export")
+                        if (APP_DIR / "static" / "plugins" / f"{name}.js").is_file()],
+        plugin_styles=[name for name in ("device", "screening", "longterm", "export")
+                       if (APP_DIR / "static" / "plugins" / f"{name}.css").is_file()],
         products=fetch_era5_waves.PRODUCTS,
         groups=fetch_era5_waves.VARIABLE_GROUPS,
         group_labels=fetch_era5_waves.GROUP_LABELS,
@@ -501,7 +514,24 @@ def download_file(job_id: str, filename: str):
     return send_from_directory(directory, filename, as_attachment=True)
 
 
+def job_view(job_id: str, product: str | None = None) -> plugins.JobView:
+    """A finished job, with the grid node from ?node_lat=&node_lon=, for plugin routes."""
+    job = completed_job(job_id, product)
+    files = data_files(job["directory"])
+    node = requested_node(job, files)
+    directory, latitude, longitude, kind = job["directory"], job["latitude"], job["longitude"], job["product"]
+    return plugins.JobView(
+        id=job["id"], product=kind, directory=directory, latitude=latitude, longitude=longitude,
+        files=files, node=node,
+        _analysis=lambda: cached_analysis(directory, files, latitude, longitude, kind, node),
+        _frame=lambda: (cached_analysis(directory, files, latitude, longitude, kind, node),
+                        load_timeseries(directory, node))[1],
+        _nodes=lambda: cached_nodes(directory, files, latitude, longitude, kind),
+    )
+
+
 load_jobs()
+LOADED_PLUGINS = plugins.load_plugins(app, plugins.PluginContext(job=job_view, downloads=DOWNLOADS))
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=False)
