@@ -145,3 +145,18 @@ def test_crosscheck_at_a_chosen_node(client):
     assert data["node"] == {"latitude": 0.0, "longitude": 96.0} and not any("different grid cells" in w for w in data["warnings"])
     missing = client.get("/api/crosscheck?a=eeeeeeeeeea5&b=eeeeeeeeeeb5&node_lat=0.5&node_lon=95.5")   # land in A
     assert missing.status_code == 422
+
+
+def test_sections_are_grouped_into_analysis_tabs(tmp_path):
+    path = tmp_path / "era5-spectra_2020-04.nc"
+    spectra_dataset().to_netcdf(path)
+    payload, _ = analysis.analyse([path], 0.0, 95.0, "wave-spectra")
+    groups = {s["title"]: s["group"] for s in payload["sections"]}
+    assert groups["Record and sampling"] == "overview" and groups["Monthly climatology"] == "overview"
+    assert groups["Scatter diagram Hm0 vs Te (primary)"] == "distributions"
+    assert groups["Cumulative energy flux vs period"] == "distributions"
+    assert groups["Direction: energy mean vs flux"] == "direction"
+    assert groups["Spectral shape diagnostics"] == "quality"
+    assert {s["group"] for s in payload["sections"]} <= {"overview", "distributions", "direction", "quality"}
+    assert analysis.section_group("Sector flux: heading 200") == "direction"
+    assert analysis.section_group("Anything else") == "overview"

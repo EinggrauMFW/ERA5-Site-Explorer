@@ -28,6 +28,15 @@ Optional environment variables (see `.env.example`; not loaded automatically): `
 `wavespectra` is optional (spectral partitioning and one cross-check test); without it those parts
 say they are unavailable.
 
+## The interface
+
+A sticky header links to the page sections and shows only the ones that apply (Status and Analysis appear
+once a job is open). The map stays in view while the form scrolls and, after a download, draws every grid
+node with a colour legend. The analysis keeps its key numbers at the top and splits the rest into tabs:
+Overview, Distributions, Direction (with the sector form), Quality, Time series, Grid nodes and Notes &
+limits. History lists past jobs as cards. The theme follows the system (light or dark) and can be switched
+with the button in the header; the choice is remembered. It is usable on a phone.
+
 ## Download options
 
 | Product | CDS dataset | What you get |

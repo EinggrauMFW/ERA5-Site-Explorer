@@ -412,7 +412,8 @@ def get_analysis(job_id: str):
                 return jsonify(error="Sector flux needs the wave-spectra route (Option B)"), 400
             heading_from = parse_number(heading, "Heading", 0, 360)
             half_width = parse_number(request.args.get("halfwidth", "22.5"), "Half-width", 1, 90)
-            section = sector_section(load_timeseries(directory, node), heading_from, half_width)
+            section = {**sector_section(load_timeseries(directory, node), heading_from, half_width),
+                       "group": "direction"}
             sections = list(result["sections"])
             sections.insert(2, section)  # next to the flux summary
             result = {**result, "sections": sections}

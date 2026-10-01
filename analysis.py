@@ -23,7 +23,7 @@ import xarray as xr
 
 import wavecalc as wc
 
-ANALYSIS_VERSION = 4
+ANALYSIS_VERSION = 6
 
 HOURS_PER_YEAR = 8766.0           # 365.25 days
 MIN_RECORD_YEARS = 10             # project target of the author, not a standard
@@ -81,7 +81,7 @@ SPECTRA_META = {
     "flux": ("Energy flux, finite depth", "kW/m", False),
     "dm_from": ("Mean direction, coming from", "°", False),
     "theta_j_from": ("Flux direction θJ, coming from", "°", False),
-    "directionality": ("Flux directionality |J⃗|/J", "", False),
+    "directionality": ("Flux directionality |J_vec|/J", "", False),
     "tm01": ("Tm01 = m0/m1", "s", True),
     "tm02": ("Tm02 = √(m0/m2)", "s", True),
     "tp_grid": ("Tp, grid-bin peak", "s", True),
@@ -289,6 +289,22 @@ def ordered(names, circular: set[str], priority: list[str]) -> list[str]:
     return first + rest + [n for n in names if n in circular and n not in first]
 
 
+# Which tab of the analysis page a section belongs to (the browser shows one group at a time).
+SECTION_GROUPS = (
+    ("distributions", ("scatter", "wave rose", "cumulative")),
+    ("direction", ("direction:", "sector flux", "partitions")),
+    ("quality", ("quality control", "validity", "composition", "shape diagnostics")),
+)
+
+
+def section_group(title: str) -> str:
+    lowered = title.lower()
+    for group, keywords in SECTION_GROUPS:
+        if any(keyword in lowered for keyword in keywords):
+            return group
+    return "overview"
+
+
 def row(label, value, note=None) -> dict:
     return {"label": label, "value": value, "note": note}
 
@@ -388,6 +404,8 @@ def build_payload(frame: pd.DataFrame, specs: list[tuple[str, str, str, bool, bo
         series[name] = {"label": label, "unit": unit, "circular": circular, "advanced": advanced,
                         "values": mean_values, "max": max_values, **summarise(values, circular)}
 
+    for section in sections:
+        section.setdefault("group", section_group(section["title"]))
     cell = wave_cell or atmos_cell
     distance = float(haversine_km(latitude, longitude, *cell))
     primary_values = frame[primary].to_numpy(dtype=float)
@@ -875,7 +893,7 @@ def analyse_spectra(files: list[Path], latitude: float, longitude: float,
         row("Flux direction θJ (coming from)", fmt(circular_mean(theta_j), 1, "°"),
             "flux weights long periods more than mwd does"),
         row("Mean |θJ − mean direction|", fmt(float(np.abs(wc.angular_difference(theta_j[both], dm[both])).mean()), 1, "°")),
-        row("Mean flux directionality |J⃗|/J", fmt(float(finite(frame["directionality"]).mean()), 3),
+        row("Mean flux directionality |J_vec|/J", fmt(float(finite(frame["directionality"]).mean()), 3),
             "1 = unidirectional. The IEC TS 62600-101 name for this ratio is unverified"),
     ]
     sections.append({"kind": "kv", "title": "Direction: energy mean vs flux", "rows": direction_rows})

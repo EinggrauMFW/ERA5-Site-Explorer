@@ -19,6 +19,51 @@ let charts = [];
 
 const ACTIVE = ['queued', 'running'];
 const PRODUCT_SHORT = { 'single-levels': 'A · single levels', 'mars-surface': 'MARS surface', 'wave-spectra': 'B · wave spectra' };
+const PRODUCT_SEGMENTS = {
+  'single-levels': ['Option A', 'Single levels'],
+  'wave-spectra': ['Option B', '2D spectra'],
+  'mars-surface': ['MARS', 'Surface fields']
+};
+
+// Numbers shown with a consistent number of decimals, by magnitude.
+function fmtNum(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value), a = Math.abs(n);
+  return n.toLocaleString(undefined, { maximumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2, minimumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2 });
+}
+
+// --- theme: automatic (follows the system), light or dark ---------------------------------
+const THEMES = ['auto', 'light', 'dark'];
+const THEME_ICON = { auto: '◐', light: '☀', dark: '☾' };
+let themeMode = 'auto';
+try { const saved = localStorage.getItem('theme'); if (THEMES.includes(saved)) themeMode = saved; } catch (error) { /* storage can be blocked */ }
+
+function applyTheme(redraw = true) {
+  if (themeMode === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = themeMode;
+  const button = $('#theme-toggle');
+  button.textContent = THEME_ICON[themeMode];
+  button.title = button.ariaLabel = `Theme: ${themeMode === 'auto' ? 'automatic' : themeMode}`;
+  try { localStorage.setItem('theme', themeMode); } catch (error) { /* ignore */ }
+  if (redraw && activeJob && !analysisEl.hidden) loadAnalysis(activeJob, { scroll: false }); // charts read colours when created
+}
+$('#theme-toggle').addEventListener('click', () => {
+  themeMode = THEMES[(THEMES.indexOf(themeMode) + 1) % THEMES.length];
+  applyTheme();
+});
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode === 'auto') applyTheme(); });
+
+// --- top navigation follows what is on the page ---------------------------------------------
+function updateNav() {
+  const visible = { status: !statusCard.hidden, analysis: !analysisEl.hidden, recent: !$('#recent').hidden };
+  document.querySelectorAll('.topnav a[data-needs]').forEach(link => link.classList.toggle('is-off', !visible[link.dataset.needs]));
+}
+const navObserver = new IntersectionObserver(entries => {
+  entries.filter(entry => entry.isIntersecting).forEach(entry => {
+    document.querySelectorAll('.topnav a').forEach(link => link.classList.toggle('is-active', link.getAttribute('href') === `#${entry.target.id}`));
+  });
+}, { rootMargin: '-25% 0px -65% 0px' });
+['request', 'status-card', 'analysis', 'recent', 'crosscheck'].forEach(id => navObserver.observe($(`#${id}`)));
 
 function showError(message) {
   formError.textContent = message || '';
@@ -74,9 +119,15 @@ map.on('click', event => {
   setCoordinates(event.lngLat.lng, event.lngLat.lat);
 });
 marker.on('dragend', () => { const p = marker.getLngLat(); setCoordinates(p.lng, p.lat); });
+let nodeHandlersAdded = false;
+
 function addMapLayers() {
-  // Safe to call repeatedly; waits until the (possibly replaced) style is ready.
-  if (!map.isStyleLoaded()) return;
+  // Safe to call repeatedly: it does nothing until the (possibly replaced) style accepts layers.
+  try { addMapLayersNow(); hideMapLoader(); } catch (error) { /* the next style event retries */ }
+}
+
+function addMapLayersNow() {
+  if (!map.getStyle()) return;
   if (!map.getSource('study-area')) {
     map.addSource('study-area', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({ id:'study-area-fill', type:'fill', source:'study-area', paint:{ 'fill-color':'#c9ff4a', 'fill-opacity':0.18 } });
@@ -91,6 +142,9 @@ function addMapLayers() {
       'circle-stroke-width': ['case', ['get', 'selected'], 3, 1],
       'circle-stroke-color': ['case', ['get', 'selected'], '#c9ff4a', '#ffffff']
     } });
+  }
+  if (!nodeHandlersAdded) {  // listeners belong to the layer id and survive a style swap
+    nodeHandlersAdded = true;
     map.on('click', 'nodes-circle', event => {
       const f = event.features[0];
       if (f) selectNode(nodeAt(f.properties.lat, f.properties.lon));
@@ -107,13 +161,19 @@ map.on('styledata', addMapLayers);
 
 // If the remote basemap cannot load (offline, blocked), fall back to a plain background so the
 // study box and grid nodes still draw.
-const FALLBACK_STYLE = { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#dfe7e3' } }] };
+const mapLoader = $('#map-loader');
+function hideMapLoader() {
+  mapLoader.classList.add('done');
+  setTimeout(() => { mapLoader.hidden = true; }, 350);
+}
 setTimeout(() => {
   if (!map.isStyleLoaded()) {
     console.warn('Basemap style did not load; using a plain background.');
-    map.setStyle(FALLBACK_STYLE);
+    const background = getComputedStyle(document.documentElement).getPropertyValue('--sea-soft').trim() || '#d6e8dd';
+    map.setStyle({ version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': background } }] });
+    $('#map-note').textContent = 'Basemap unavailable: showing grid only. Click to place your site';
   }
-}, 8000);
+}, 5000);
 
 [latInput, lonInput].forEach(input => input.addEventListener('change', () => {
   const lat = Number(latInput.value), lng = Number(lonInput.value);
@@ -137,8 +197,29 @@ const PRODUCT_NOTES = {
   'wave-spectra': 'Option B. Full 2D wave spectra (24 directions × 30 frequencies, 0.5° grid) from the MARS wave stream. Slow and large; every parameter and the finite-depth flux, flux direction and sector flux are computed from E(f, θ). Also downloads the model depth.'
 };
 
+function buildSegmented() {
+  const holder = $('#product-segmented');
+  holder.replaceChildren(...[...productSelect.options].map(option => {
+    const [name, detail] = PRODUCT_SEGMENTS[option.value] || [option.textContent, ''];
+    const button = node('button', '');
+    button.type = 'button';
+    button.setAttribute('role', 'radio');
+    button.dataset.value = option.value;
+    button.append(document.createTextNode(name), node('small', '', detail));
+    button.addEventListener('click', () => {
+      productSelect.value = option.value;
+      productSelect.dispatchEvent(new Event('change'));
+    });
+    return button;
+  }));
+}
+
 function applyProduct() {
   const product = productSelect.value;
+  document.querySelectorAll('#product-segmented button').forEach(button => {
+    button.setAttribute('aria-checked', String(button.dataset.value === product));
+    button.tabIndex = button.dataset.value === product ? 0 : -1;
+  });
   document.querySelectorAll('.options').forEach(box => { box.hidden = box.dataset.product !== product; });
   $('#product-note').textContent = PRODUCT_NOTES[product];
   $('#time-step').value = String(config.defaultSteps[product]);
@@ -169,7 +250,9 @@ function renderFiles(job) {
 
 function renderJob(job) {
   statusEl.textContent = job.status;
-  $('#job-id').textContent = `JOB ${job.id} · ${PRODUCT_SHORT[job.product] || 'single levels'}`;
+  statusEl.className = `pill pill-${job.status}`;
+  $('#progress').hidden = !ACTIVE.includes(job.status);
+  $('#job-id').textContent = `${job.id} · ${PRODUCT_SHORT[job.product] || 'single levels'}`;
   logEl.textContent = job.log.length ? job.log.join('\n') : 'Waiting for the fetcher…';
   logEl.scrollTop = logEl.scrollHeight;
   renderFiles(job);
@@ -214,6 +297,7 @@ function openJob(jobId) {
   statusCard.hidden = false;
   analysisEl.hidden = true;
   destroyCharts();
+  updateNav();
   statusCard.scrollIntoView({ behavior:'smooth' });
   poll(jobId);
 }
@@ -222,15 +306,22 @@ async function refreshRecent() {
   try {
     const jobs = await (await fetch('/api/jobs')).json();
     $('#recent').hidden = !jobs.length;
+    updateNav();
     fillCrosscheckSelects(jobs);
     $('#recent-list').replaceChildren(...jobs.slice(0, 15).map(job => {
-      const link = document.createElement('a');
-      link.href = `#job=${job.id}`;
-      link.textContent = `${PRODUCT_SHORT[job.product] || 'single levels'} · ${job.start} → ${job.end} · ${job.latitude.toFixed(3)}, ${job.longitude.toFixed(3)} · ${job.status}${job.dry_run ? ' (preview)' : ''}`;
-      link.addEventListener('click', event => { event.preventDefault(); openJob(job.id); });
-      return link;
+      const item = node('a', `recent-item${job.id === activeJob ? ' is-open' : ''}`);
+      item.href = `#job=${job.id}`;
+      const [name] = PRODUCT_SEGMENTS[job.product || 'single-levels'] || [job.product];
+      item.append(
+        node('span', 'badge', name.replace('Option ', '')),
+        node('span', 'where', `${job.latitude.toFixed(3)}, ${job.longitude.toFixed(3)} · ${job.start} → ${job.end}`),
+        Object.assign(node('span', `pill pill-${job.status}`, job.dry_run ? 'preview' : job.status)),
+        node('small', '', `${(PRODUCT_SEGMENTS[job.product || 'single-levels'] || ['', ''])[1]} · job ${job.id}`)
+      );
+      item.addEventListener('click', event => { event.preventDefault(); openJob(job.id); });
+      return item;
     }));
-  } catch (error) { /* the recent list is a convenience */ }
+  } catch (error) { /* the history list is a convenience */ }
 }
 
 cancelButton.addEventListener('click', async () => {
@@ -245,6 +336,7 @@ deleteButton.addEventListener('click', async () => {
   analysisEl.hidden = true;
   destroyCharts();
   clearNodes();
+  updateNav();
   refreshRecent();
 });
 
@@ -278,9 +370,14 @@ function nodeQuery() {
 function renderNodesOnMap() {
   const source = map.getSource && map.getSource('nodes');
   if (!source) return;
-  if (!nodeData) { source.setData({ type: 'FeatureCollection', features: [] }); return; }
+  const legend = $('#map-legend');
+  if (!nodeData) { source.setData({ type: 'FeatureCollection', features: [] }); legend.hidden = true; return; }
   const values = nodeData.nodes.filter(n => n.valid && n[nodeMetric] != null).map(n => n[nodeMetric]);
   const low = Math.min(...values), high = Math.max(...values);
+  legend.hidden = !values.length;
+  $('#legend-label').textContent = nodeMetric === 'value' && nodeData.value_label ? nodeData.value_label : NODE_METRICS[nodeMetric].label;
+  $('#legend-min').textContent = fmtNum(low);
+  $('#legend-max').textContent = fmtNum(high);
   source.setData({ type: 'FeatureCollection', features: nodeData.nodes.map(n => ({
     type: 'Feature',
     geometry: { type: 'Point', coordinates: [n.lon, n.lat] },
@@ -322,7 +419,7 @@ function renderNodePanel() {
   });
   const table = $('#nodes-table');
   const head = node('tr');
-  columns.forEach(([, text]) => head.append(node('th', '', text)));
+  columns.forEach(([key, text]) => head.append(node('th', key === 'lat' || key === 'lon' ? 'num' : 'num', text)));
   const body = rows.slice(0, 250).map(n => {
     const tr = node('tr');
     const selected = highlightNode && Math.abs(n.lat - highlightNode.lat) < 1e-3 && Math.abs(n.lon - highlightNode.lon) < 1e-3;
@@ -331,9 +428,9 @@ function renderNodePanel() {
     columns.forEach(([key]) => {
       const value = n[key];
       const text = key === 'lat' || key === 'lon' ? Number(value).toFixed(2)
-        : value == null ? (n.valid ? '' : 'land / ice') : String(key === 'depth' || key === 'distance_km' ? Math.round(value * 10) / 10 : value);
-      const td = node('td', '', text);
-      if (key === 'lon' && isDefault) td.append(node('small', 'tag', ' nearest ocean cell'));
+        : value == null ? (n.valid ? '' : 'land / ice') : (key === 'depth' || key === 'distance_km' ? fmtNum(value) : fmtNum(value));
+      const td = node('td', value == null && !n.valid ? '' : 'num', text);
+      if (key === 'lon' && isDefault) td.append(node('small', 'tag', 'nearest ocean'));
       tr.append(td);
     });
     if (n.valid) {
@@ -356,6 +453,7 @@ async function loadNodes(jobId) {
     nodeData = { ...data, jobId };
     renderNodesOnMap();
     renderNodePanel();
+    if (!analysisEl.hidden) renderTabs();
     const lats = nodeData.nodes.map(n => n.lat), lons = nodeData.nodes.map(n => n.lon);
     const site = nodeData.requested_coordinate;
     map.fitBounds([[Math.min(...lons, site.longitude), Math.min(...lats, site.latitude)],
@@ -398,23 +496,31 @@ function node(tag, className, text) {
 
 function metric(label, value, detail) {
   const el = node('div', 'metric');
-  el.append(node('span', '', label), node('strong', '', value), node('small', '', detail));
+  const strong = node('strong');
+  const match = /^(-?[\d.,]+)\s*(.*)$/.exec(value);
+  if (match) { strong.append(document.createTextNode(match[1])); if (match[2]) strong.append(node('i', '', match[2])); }
+  else strong.textContent = value;
+  el.append(node('span', '', label), strong, node('small', '', detail));
   return el;
 }
+
+const GROUPS = ['overview', 'distributions', 'direction', 'quality'];
 
 function destroyCharts() {
   charts.forEach(chart => chart.destroy());
   charts = [];
-  for (const id of ['#charts', '#charts-advanced', '#sections']) $(id).replaceChildren();
+  for (const id of ['#charts', '#charts-advanced', ...GROUPS.map(g => `#sections-${g}`)]) $(id).replaceChildren();
   $('#advanced').hidden = true;
 }
 
-const fmt = (value, unit) => value === null || value === undefined ? '—' : `${value} ${unit}`.trim();
+const fmt = (value, unit) => value === null || value === undefined ? '—' : `${fmtNum(value)} ${unit}`.trim();
 
 function chartTheme() {
   const css = getComputedStyle(document.documentElement);
-  const line = css.getPropertyValue('--sea').trim(), grid = css.getPropertyValue('--line').trim();
-  return { line, axis: { stroke:'#66716d', grid:{ stroke:grid, width:1 }, ticks:{ stroke:grid, width:1 } } };
+  const token = name => css.getPropertyValue(name).trim();
+  const font = '11px ' + (token('--sans') || 'system-ui');
+  const axis = { stroke: token('--chart-axis'), font, grid: { stroke: token('--chart-grid'), width: 1 }, ticks: { stroke: token('--chart-grid'), width: 1 } };
+  return { line: token('--chart-line'), band: token('--chart-band'), accent: token('--chart-accent'), axis };
 }
 
 function addChart(item, stamps, container) {
@@ -427,13 +533,13 @@ function addChart(item, stamps, container) {
   article.append(node('h3', '', item.label), summary, holder);
   container.append(article);
 
-  const { line, axis } = chartTheme();
+  const { line, band, axis } = chartTheme();
   const series = [{}, item.circular
     ? { label:`${item.label} (${item.unit})`, paths:() => null, points:{ show:true, size:4, fill:line, stroke:line } }
     : { label:`${item.label} (${item.unit})`, stroke:line, width:2 }];
   const data = [stamps, item.values];
   if (item.max) {
-    series.push({ label:`Block max (${item.unit})`, stroke:'rgba(21,63,69,.35)', width:1 });
+    series.push({ label:`Block max (${item.unit})`, stroke:band, width:1 });
     data.push(item.max);
   }
   charts.push(new uPlot({
@@ -443,9 +549,66 @@ function addChart(item, stamps, container) {
   }, data, holder));
 }
 
-window.addEventListener('resize', () => charts.forEach(chart => {
-  chart.setSize({ width: Math.max(280, chart.root.parentElement.clientWidth), height: chart.height });
-}));
+// Charts created while their tab is hidden have no width; size every visible chart again.
+function resizeCharts() {
+  charts.forEach(chart => {
+    const holder = chart.root.parentElement;
+    if (holder && holder.offsetParent !== null) chart.setSize({ width: Math.max(280, holder.clientWidth), height: chart.height });
+  });
+}
+window.addEventListener('resize', resizeCharts);
+
+// --- tabs ------------------------------------------------------------------------------------
+const TAB_LABELS = {
+  overview: 'Overview', distributions: 'Distributions', direction: 'Direction', quality: 'Quality',
+  series: 'Time series', nodes: 'Grid nodes', notes: 'Notes & limits'
+};
+let currentTab = 'overview';
+
+function panelHasContent(id) {
+  const panel = $(`#panel-${id}`);
+  if (id === 'series') return $('#charts').children.length > 0 || !$('#advanced').hidden;
+  if (id === 'nodes') return !!nodeData;
+  if (id === 'notes') return $('#analysis-notes').children.length > 0;
+  if (id === 'direction') return $('#sections-direction').children.length > 0 || !$('#sector-form').hidden;
+  return panel.querySelector('.sections').children.length > 0 || id === 'overview';
+}
+
+function activateTab(id, focus = false) {
+  const available = Object.keys(TAB_LABELS).filter(panelHasContent);
+  currentTab = available.includes(id) ? id : 'overview';
+  document.querySelectorAll('#analysis-tabs .tab').forEach(tab => {
+    const on = tab.dataset.tab === currentTab;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    if (on && focus) tab.focus();
+  });
+  document.querySelectorAll('.panels .panel').forEach(panel => { panel.hidden = panel.dataset.panel !== currentTab; });
+  requestAnimationFrame(() => requestAnimationFrame(resizeCharts));
+}
+
+function renderTabs() {
+  const available = Object.keys(TAB_LABELS).filter(panelHasContent);
+  const tabs = $('#analysis-tabs');
+  tabs.replaceChildren(...available.map(id => {
+    const tab = node('button', 'tab', TAB_LABELS[id]);
+    tab.type = 'button';
+    tab.id = `tab-${id}`;
+    tab.dataset.tab = id;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-controls', `panel-${id}`);
+    tab.addEventListener('click', () => activateTab(id));
+    tab.addEventListener('keydown', event => {
+      const index = available.indexOf(id);
+      const next = event.key === 'ArrowRight' ? available[(index + 1) % available.length]
+        : event.key === 'ArrowLeft' ? available[(index - 1 + available.length) % available.length] : null;
+      if (next) { event.preventDefault(); activateTab(next, true); }
+    });
+    return tab;
+  }));
+  document.querySelectorAll('.panels .panel').forEach(panel => panel.setAttribute('aria-labelledby', `tab-${panel.dataset.panel}`));
+  activateTab(currentTab);
+}
 
 function renderKv(section) {
   const table = node('table', 'kv');
@@ -463,14 +626,16 @@ function renderKv(section) {
 function renderTable(section) {
   const table = node('table', 'grid-table');
   const head = node('tr');
-  section.columns.forEach(column => head.append(node('th', '', column)));
+  section.columns.forEach((column, index) => head.append(node('th', index ? 'num' : '', column)));
   table.append(head);
   section.rows.forEach(values => {
     const tr = node('tr');
-    values.forEach(value => tr.append(node('td', '', value)));
+    values.forEach((value, index) => tr.append(node('td', index ? 'num' : '', value)));
     table.append(tr);
   });
-  return table;
+  const wrap = node('div', 'scroll');  // wide tables scroll inside their card instead of the page
+  wrap.append(table);
+  return wrap;
 }
 
 function renderScatter(section) {
@@ -496,8 +661,10 @@ function renderScatter(section) {
       for (let j = 0; j < yEdges.length - 1; j++) {
         const value = matrix[i][j];
         const td = node('td', '', value > 0 ? (value >= 10 ? value.toFixed(0) : value.toFixed(1)) : '');
-        if (value > 0) td.style.background = `rgba(21,63,69,${(0.08 + 0.7 * value / peak).toFixed(2)})`;
-        if (value > 0.6 * peak) td.style.color = '#fff';
+        // Heat comes from the chart colour token so it reads in both themes; the strongest cells
+        // flip to the surface colour for contrast.
+        if (value > 0) td.style.background = `color-mix(in srgb, var(--chart-line) ${Math.round(10 + 78 * value / peak)}%, transparent)`;
+        if (value > 0.55 * peak) td.style.color = 'var(--surface)';
         tr.append(td);
       }
       table.append(tr);
@@ -585,21 +752,22 @@ function renderLine(section) {
 const SECTION_RENDERERS = { kv: renderKv, table: renderTable, scatter: renderScatter, rose: renderRose, line: renderLine };
 
 function renderSections(sections) {
-  const container = $('#sections');
-  container.replaceChildren();
+  GROUPS.forEach(group => $(`#sections-${group}`).replaceChildren());
   sections.forEach(section => {
     const block = node('article', `section-block kind-${section.kind}`);
     block.append(node('h3', '', section.title));
     block.append(SECTION_RENDERERS[section.kind](section));
     if (section.note) block.append(node('p', 'section-note', section.note));
-    container.append(block);
+    const group = GROUPS.includes(section.group) ? section.group : 'overview';
+    $(`#sections-${group}`).append(block);
   });
 }
 
-async function loadAnalysis(jobId) {
+async function loadAnalysis(jobId, { scroll = true } = {}) {
   analysisEl.hidden = false;
+  updateNav();
   $('#analysis-meta').textContent = 'Reading the downloaded NetCDF files…';
-  $('#metrics').replaceChildren();
+  $('#metrics').replaceChildren(...[0, 1, 2, 3].map(() => Object.assign(node('div', 'metric'), { innerHTML: '<span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span>' })));
   destroyCharts();
   if (!nodeData || nodeData.jobId !== jobId) loadNodes(jobId);
   const params = [];
@@ -667,7 +835,8 @@ async function loadAnalysis(jobId) {
     $('#advanced').removeEventListener('toggle', once);
     advanced.forEach(name => addChart(s[name], stamps, $('#charts-advanced')));
   });
-  analysisEl.scrollIntoView({ behavior:'smooth', block:'start' });
+  renderTabs();
+  if (scroll) analysisEl.scrollIntoView({ behavior:'smooth', block:'start' });
 }
 
 $('#sector-form').addEventListener('submit', event => {
@@ -732,7 +901,11 @@ function renderCrosscheck(data) {
       const tol = r.tolerance_unit === 'relative' ? `${(r.tolerance * 100).toFixed(0)}%` : `${r.tolerance}°`;
       [`${r.label} (${r.unit})`, r.n.toLocaleString(), r.bias, r.rmse, r.bias_pct === null ? '—' : `${r.bias_pct}%`,
        r.correlation === null ? '—' : r.correlation, `${r.within_tolerance_pct}% (±${tol})`, r.abs_diff_p50, r.abs_diff_p95,
-       r.expectation].forEach(v => tr.append(node('td', '', String(v))));
+       r.expectation].forEach((v, index) => {
+        const cell = node('td', index > 0 && index < 9 ? 'num' : '', String(v));
+        if (index === 6) cell.className = `num ${r.within_tolerance_pct >= 95 ? 'cc-ok' : r.within_tolerance_pct >= 80 ? 'cc-warn' : 'cc-bad'}`;
+        tr.append(cell);
+      });
     }
     table.append(tr);
   });
@@ -805,7 +978,10 @@ form.addEventListener('submit', async event => {
   }
 });
 
+buildSegmented();
+applyTheme(false);
 applyProduct();
+updateNav();
 refreshRecent();
 const hashJob = /^#job=([0-9a-f]{12})$/.exec(location.hash);
 if (hashJob) openJob(hashJob[1]);
