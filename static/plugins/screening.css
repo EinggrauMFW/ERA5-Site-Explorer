@@ -1,0 +1,81 @@
+.screening-ui {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+.screening-controls {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+.screening-table-card {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+}
+.screening-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.screening-table th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    padding: 8px;
+    text-align: left;
+    border-bottom: 2px solid var(--line);
+}
+.screening-table td {
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+}
+.screening-table tr:hover {
+    background: var(--surface-2);
+}
+.heat-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+.heat-table th, .heat-table td {
+    padding: 6px;
+    text-align: center;
+    border: 1px solid var(--line);
+}
+.heat-table th {
+    background: var(--surface-2);
+}
+.heat-cell {
+    color: var(--ink);
+}
+.compare-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+.compare-chips {
+    display: flex;
+    gap: 10px;
+}
+.compare-chip {
+    padding: 4px 8px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.compare-chip button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--danger-ink);
+}
+.compare-grid {
+    display: grid;
+    grid-template-columns: auto repeat(3, 1fr);
+    gap: 10px;
+}
+.compare-chart-container {
+    height: 300px;
+}

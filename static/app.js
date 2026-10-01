@@ -1080,7 +1080,10 @@ window.EraExplorer = {
   async api(path, options = {}) {
     const joiner = path.includes('?') ? '&' : '?';
     const url = options.noNode || !selectedNode ? path : `${path}${joiner}${nodeQuery()}`;
-    const response = await fetch(url, options);
+    // A string body is JSON here (callers pass JSON.stringify(...)); without this header Flask cannot parse it.
+    const headers = new Headers(options.headers || {});
+    if (typeof options.body === 'string' && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    const response = await fetch(url, { ...options, headers });
     const type = response.headers.get('content-type') || '';
     const body = type.includes('json') ? await response.json() : await response.text();
     if (!response.ok) throw new Error((body && body.error) || `Request failed (${response.status})`);

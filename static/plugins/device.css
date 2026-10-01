@@ -1,0 +1,85 @@
+/* CSS for device plugin */
+
+.device-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.device-form-row {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.device-form-row > div {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.device-cards-container {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.device-card {
+    flex: 1;
+    min-width: 300px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.occupancy-table {
+    border-collapse: collapse;
+    font-size: 0.85em;
+    width: 100%;
+}
+
+.occupancy-table th, .occupancy-table td {
+    padding: 4px;
+    text-align: right;
+    border: 1px solid var(--line);
+}
+
+.occupancy-table th {
+    background: var(--surface-2);
+    font-weight: bold;
+}
+
+.device-list {
+    margin-top: 1rem;
+}
+
+.device-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    background: var(--surface);
+}
+
+.device-list-item-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.device-ambiguity-banner {
+    background: var(--surface-2);
+    padding: 1rem;
+    border-left: 4px solid var(--accent);
+    margin-bottom: 1rem;
+    font-weight: bold;
+}
+
+.occupancy-wrapper {
+    overflow-x: auto;
+    margin-top: 1rem;
+}

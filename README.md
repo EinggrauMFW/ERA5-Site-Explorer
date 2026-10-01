@@ -37,6 +37,42 @@ Overview, Distributions, Direction (with the sector form), Quality, Time series,
 limits. History lists past jobs as cards. The theme follows the system (light or dark) and can be switched
 with the button in the header; the choice is remembered. It is usable on a phone.
 
+## Resource tools
+
+Four tabs and header actions sit on top of the analysis. They are plugins (see below) and work on the grid
+node chosen in the analysis, for both routes unless noted.
+
+- **Screening.** Every ocean node of the download at once: colour the map by mean flux, Hm0, Te, 95th
+  percentile flux, flux variability, the max/min calendar-season ratio, or the mean flux of one season or
+  month; a ranking table; a month-by-node heat table; and a side-by-side comparison of up to three nodes
+  with the 12-month flux climatology. Seasons are calendar seasons by month (DJF = Dec-Feb, ...). Flux is
+  computed per record first, then averaged. Spectra statistics use at most 1,500 records per node.
+- **Device.** Upload a power matrix CSV (rows Hm0 in m, columns period in s, power in kW; centres or lower
+  edges; undefined cells blank) and get annual energy production (`mean power × 8766 h`), capacity factor,
+  the share of records and of flux outside the matrix, two capture-width estimators (energy-weighted
+  `ΣP/ΣJ`, and the mean of `P/J` over records with `J ≥ 1 kW/m`, each also as a ratio to a width you give),
+  monthly energy shares and an occupancy table, using nearest-bin and bilinear lookup. When the matrix's
+  period axis is unknown, both Te- and Tp-indexed results are shown and the AEP spread is the bound of that
+  ambiguity; they are never blended. The synthetic example matrix is not a real device.
+- **Long-term.** Monthly and seasonal climatology with the P10-P90 band across years; COV, a monthly and a
+  seasonal variability index `(max - min) / annual mean`; interannual variation of complete years; and
+  extreme Hm0 by peaks over threshold: runs declustering, a generalised Pareto fit by maximum likelihood,
+  return levels with 90% bootstrap intervals (Poisson event count, resampled excesses), a threshold
+  sensitivity table and a log-axis return-level plot. It refuses to fit with too few peaks and warns when a
+  return period exceeds three times the record. A one-month record is a demonstration, not an estimate.
+- **Export.** `report.md` per route (metadata, key results, every table on the page, definitions and limits,
+  provenance with DOIs and file hashes, plus any device or long-term fragments), each table as CSV with
+  unit-suffixed column names, the rose and scatter diagrams as standalone SVG (light or dark), and a zip
+  bundle with all of it, the verbatim `provenance.json`, the node's `timeseries.csv` and a README of the bin
+  and direction conventions. The tab lists exactly what exists for the job.
+
+**Adding a tool.** A tool is `plugin_<name>.py` (`register(app, ctx)`, routes under
+`/api/jobs/<id>/<feature>`, access to the job through `ctx.job(...)`, which returns a node-aware `JobView`
+with a canonical frame whose columns are the same for both routes) plus `static/plugins/<name>.js`
+(wrapped in an IIFE; registers a tab and/or header actions through `window.EraExplorer`). The interface is
+defined in `plugins.py` and at the end of `static/app.js`; `docs/work-packages/` holds the contract and the
+four specifications the tools were built from.
+
 ## Download options
 
 | Product | CDS dataset | What you get |
