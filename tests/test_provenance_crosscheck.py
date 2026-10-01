@@ -424,3 +424,61 @@ def test_a_refused_single_day_stops_the_run_instead_of_hammering_cds(tmp_path, m
     assert code == 1
     assert AlwaysRefuse.calls == [8, 4, 2, 1]    # one halving path, then stop: no sibling requests
     assert "single day" in out and "--estimate" in out and "--time-step" in out
+
+
+class ModernClient:
+    """Stands in for ecmwf.datastores.Client: estimate_costs, and submit that returns a Remote."""
+    submitted = []
+    deleted = []
+
+    def estimate_costs(self, dataset, request):
+        return {"cost": {"id": "size", "cost": 5.0, "limit": 10.0}}
+
+    def submit(self, dataset, request):
+        ModernClient.submitted.append(request)
+        if len(request["time"].split("/")) > 4 or request["expver"] == "5":
+            raise Exception("403 Client Error: Forbidden\ncost limits exceeded\nYour request is too large.")
+        outer = ModernClient
+
+        class Remote:
+            def delete(self):
+                outer.deleted.append(request["date"])
+        return Remote()
+
+
+class LegacyLike:
+    """cdsapi.Client() returns a LegacyClient that has no estimate_costs; the modern client is .client."""
+    def __init__(self, **kwargs):
+        self.client = ModernClient()
+
+
+def test_estimate_goes_through_the_wrapped_modern_client():
+    assert fetcher.cost_limits(fetcher.estimate_cost(LegacyLike(), "x", {})) == [("size", 5.0, 10.0)]
+    assert "error" in fetcher.estimate_cost(object(), "x", {})
+
+
+def test_probe_reports_which_variants_cds_accepts_and_cancels_them():
+    options = fetcher.normalise_options("wave-spectra", time_step=1)
+    variants = fetcher.probe_variants(options, [-8.0, 114.0, -9.5, 115.5], 2026, 7, 1, "5")
+    ModernClient.submitted, ModernClient.deleted = [], []
+    results = dict(fetcher.run_probe(LegacyLike(), variants))
+    assert len(variants) == 5 and len(ModernClient.submitted) == 5
+    refused = [label for label, outcome in results.items() if outcome.startswith("REFUSED")]
+    accepted = [label for label, outcome in results.items() if outcome.startswith("accepted")]
+    assert any("expver 5" in label for label in refused) and any("hourly" in label for label in refused)
+    assert any("2020-04-01" in label for label in accepted)
+    assert len(ModernClient.deleted) == len(accepted)                  # every accepted request was cancelled
+    assert all("cost limits exceeded" in results[label] for label in refused)
+
+
+def test_probe_mode_prints_a_report_and_downloads_nothing(tmp_path, monkeypatch, capsys):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "cdsapi", types.SimpleNamespace(Client=LegacyLike))
+    monkeypatch.setattr(fetcher, "fetch_json", lambda url, timeout=30: (_ for _ in ()).throw(OSError("offline")))
+    ModernClient.submitted, ModernClient.deleted = [], []
+    code = fetcher.main(["--latitude", "-8.9", "--longitude", "114.9", "--start", "2026-07-01", "--end", "2026-07-31",
+                         "--output", str(tmp_path), "--product", "wave-spectra", "--probe"])
+    out = capsys.readouterr().out
+    assert code == 0 and "Probing CDS" in out and "REFUSED" in out and "accepted" in out
+    assert not list(tmp_path.glob("*.nc"))

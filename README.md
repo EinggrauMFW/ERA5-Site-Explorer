@@ -50,9 +50,13 @@ refused while the 6-hourly month in WaveSpectrum-ERA-5 (86,400 fields) worked, s
 request counts (the hourly time list, `expver` 5 for recent months, or the account's own limits are the
 suspects; this has not been pinned down). The fetcher therefore:
 
-1. asks CDS for a cost estimate before submitting (`client.estimate_costs`), prints CDS's reply, and sizes
-   the requests from it when the reply contains a cost and a limit; `--estimate` does only this and
-   submits nothing, so it is the way to see the real limit;
+1. asks CDS for a cost estimate before submitting (`estimate_costs` on the client wrapped by `cdsapi`),
+   prints CDS's reply, and sizes the requests from it when the reply contains a cost and a limit;
+   `--estimate` does only this and submits nothing. The costing endpoint answers HTTP 500 for MARS
+   requests in the tests made without credentials, so it may not help; if so use `--probe`, which submits
+   five one-day test requests (as configured, hourly, 6-hourly, the other `expver`, and an old final
+   date), reports which CDS accepts or refuses, and cancels every accepted one at once, so nothing is
+   downloaded;
 2. splits spectra months into near-equal runs of at most 86,400 fields, and halves a refused request;
 3. stops at the first one-day request that is refused instead of sending the rest, and says what to
    change: a larger `--time-step` (3 or 6 h), or the ERA5 version (`--expver 1` for older months, `5`

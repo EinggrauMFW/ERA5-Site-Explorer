@@ -338,10 +338,47 @@ def split_days(days: list[int], per_day: int, max_fields: int | None) -> list[li
 
 def estimate_cost(client, dataset: str, request: dict):
     """Ask CDS what a request costs without submitting it; returns the reply or an error dict."""
+    # cdsapi.Client() is a LegacyClient that wraps the modern client as ``.client``.
+    modern = getattr(client, "client", client)
     try:
-        return client.estimate_costs(dataset, request)
+        return modern.estimate_costs(dataset, request)
     except Exception as exc:  # old-style key, endpoint unavailable, or CDS refuses to estimate
         return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def probe_variants(options: dict, area: list[float], year: int, month: int, day: int,
+                   configured_expver: str) -> list[tuple[str, str, dict]]:
+    """Small test requests that separate the usual causes of a cost refusal."""
+    other = "1" if configured_expver == "5" else "5"
+    cases = [
+        (f"1 day, {options['time_step']} h step, expver {configured_expver} (as configured)",
+         options, year, month, day, configured_expver),
+        ("1 day, 1 h step (hourly)", {**options, "time_step": 1}, year, month, day, configured_expver),
+        ("1 day, 6 h step", {**options, "time_step": 6}, year, month, day, configured_expver),
+        (f"1 day, 6 h step, expver {other}", {**options, "time_step": 6}, year, month, day, other),
+        ("1 day, 6 h step, 2020-04-01, expver 1 (old final data)", {**options, "time_step": 6}, 2020, 4, 1, "1"),
+    ]
+    return [(label, *build_request(y, m, [d], area, opts, ev)) for label, opts, y, m, d, ev in cases]
+
+
+def run_probe(client, variants) -> list[tuple[str, str]]:
+    """Submit each variant and delete it at once if CDS accepts it; nothing is downloaded."""
+    modern = getattr(client, "client", client)
+    results = []
+    for label, dataset, request in variants:
+        try:
+            remote = modern.submit(dataset, request)
+        except Exception as exc:
+            reason = " ".join(str(exc).split())
+            results.append((label, f"REFUSED: {reason[:240]}"))
+            continue
+        try:
+            remote.delete()
+            results.append((label, "accepted (cancelled straight away, nothing downloaded)"))
+        except Exception as exc:
+            results.append((label, f"accepted but could not be cancelled ({exc}); remove it from your CDS "
+                                   "requests page"))
+    return results
 
 
 def cost_limits(reply) -> list[tuple[str, float, float]]:
@@ -489,6 +526,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expver", choices=["auto", "1", "5"], default="auto",
                         help="MARS experiment version: 1 = ERA5, 5 = preliminary ERA5T")
     parser.add_argument("--dry-run", action="store_true", help="print requests, do not contact CDS")
+    parser.add_argument("--probe", action="store_true",
+                        help="submit a few one-day test requests, report which CDS accepts, and cancel "
+                             "the accepted ones immediately (nothing is downloaded)")
     parser.add_argument("--estimate", action="store_true",
                         help="ask CDS for the cost of the first request of each product and exit; "
                              "nothing is submitted or downloaded")
@@ -612,6 +652,14 @@ def main(argv: list[str] | None = None) -> int:
                   flush=True)
     write_provenance(args.output / "provenance.json", provenance)
     client = cdsapi.Client(progress=False)
+
+    if args.probe:
+        year, month, days_ = chunks[0]
+        expver_now = args.expver if args.expver != "auto" else auto_expver(dt.date(year, month, days_[-1]))
+        print("Probing CDS with one-day test requests (accepted ones are cancelled at once):", flush=True)
+        for label, outcome in run_probe(client, probe_variants(options, area, year, month, days_[0], expver_now)):
+            print(f"  {label}\n    -> {outcome}", flush=True)
+        return 0
 
     # Ask CDS what the first request costs before submitting anything. The reply format is CDS's;
     # whatever it says is printed so the real limit is visible instead of guessed.
