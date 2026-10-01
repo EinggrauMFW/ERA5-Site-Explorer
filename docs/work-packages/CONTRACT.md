@@ -4,7 +4,7 @@ You are implementing ONE work package of `ERA5-Site-Explorer`, a local Flask + v
 downloads ERA5 wave data and analyses it for wave-energy resource work. The orchestrator (Claude)
 reviews and approves your work. Other agents work in parallel on other packages in the same folder.
 
-Repo root: `D:\forthewave\claude_works\ecmwf-map-app` (Windows, Python 3.13, run commands from the
+Repo root: the repository's top-level folder (Windows, Python 3.13, run commands from the
 repo root, shell is Git Bash or PowerShell). Run tests with `python -m pytest -q` (all tests) or
 `python -m pytest tests/test_<yours>.py -q`. The full suite must pass when you finish.
 

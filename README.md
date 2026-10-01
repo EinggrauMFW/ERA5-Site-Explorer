@@ -162,6 +162,12 @@ system and can be switched in the header (the choice is remembered). It is usabl
 | Tm02 | √(m0/m2), zero-crossing | `mp2` |
 | Tp | 1/fp, parabolic fit at the peak | `pp1d` |
 
+**Source for `mwp`.** J.-R. Bidlot, *Ocean wave model output parameters* (ECMWF, 27 February 2020; the file
+is named `wave_parameters.pdf`), section 3.2, defines Tm-1 = m-1/m0 as the energy mean period and says this is
+the definition of parameters 232, 236 and 239 and the partitioned 123, 126 and 129. Its parameter table lists
+140232 as "Mean wave period" (`mwp`). The app follows that definition, uses `mwp` as Te, and checks
+Tm02 ≤ Tm01 ≤ Te on every record.
+
 Deep-water flux **J = ρg²/(64π) · Hm0² · Te = 0.4906 · Hm0² · Te kW/m** (ρ = 1025 kg/m³,
 g = 9.81 m/s²). J is computed per record and then averaged, never from mean Hm0 and mean Te. Option A
 uses `mwp` directly as Te, so no Tp→Te ratio is applied and `pp1d` is deliberately not in the flux.
