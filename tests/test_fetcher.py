@@ -1,4 +1,5 @@
 import datetime as dt
+import io
 import json
 import sys
 
@@ -72,6 +73,18 @@ def test_dry_run_prints_requests_without_cdsapi(tmp_path, capsys, monkeypatch):
     april = out.split("--- 2020-04 ")[1].split("---\n", 1)[1].split("--- 2020-05 ")[0]
     assert json.loads(april)["month"] == ["04"]
     assert [p.name for p in (tmp_path / "out").iterdir()] == ["provenance.json"]  # no data files
+
+
+def test_main_prints_non_ascii_on_a_cp1252_console(tmp_path, monkeypatch):
+    buffer = io.BytesIO()
+    console = io.TextIOWrapper(buffer, encoding="cp1252", write_through=True)
+    monkeypatch.setattr(sys, "stdout", console)
+    code = fetcher.main([
+        "--latitude", "-6.9", "--longitude", "107.6", "--start", "2020-04-01",
+        "--end", "2020-04-30", "--output", str(tmp_path / "out"), "--dry-run",
+    ])
+    assert code == 0
+    assert "≈" in buffer.getvalue().decode("utf-8")  # "Estimated size ≈ ..."
 
 
 def test_main_rejects_future_end_date(capsys):
