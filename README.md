@@ -44,14 +44,24 @@ small request) and `provenance.json` (exact requests, dataset metadata and DOI, 
 period, file hashes, software versions, attribution; no credentials). The fetcher also runs on its
 own: `python fetch_era5_waves.py --help`.
 
-**CDS cost limit.** CDS refuses MARS requests above a cost limit counted in *fields* (date × time × 24
-directions × 30 frequencies for spectra), not in area, so a small box does not help. Hourly spectra for
-one month is 535,680 fields; the 6-hourly month in WaveSpectrum-ERA-5 (86,400 fields) is the largest
-request known to work. The fetcher therefore splits spectra months into near-equal runs of days
-(`era5-spectra_2025-01_d01-05.nc`, …) of at most 86,400 fields, and if CDS still answers "cost limits
-exceeded" it halves the request and retries. A 6-hourly 31-day month is two requests; an hourly month
-is seven. The exact CDS limit is not published in this repo, so if hourly runs are too slow, use a
-3-hour or 6-hour step.
+**CDS cost limit.** CDS refuses MARS requests above a cost limit and answers "cost limits exceeded".
+The limit is not simply the number of days: a one-day hourly spectra request (17,280 fields) was
+refused while the 6-hourly month in WaveSpectrum-ERA-5 (86,400 fields) worked, so something else in the
+request counts (the hourly time list, `expver` 5 for recent months, or the account's own limits are the
+suspects; this has not been pinned down). The fetcher therefore:
+
+1. asks CDS for a cost estimate before submitting (`client.estimate_costs`), prints CDS's reply, and sizes
+   the requests from it when the reply contains a cost and a limit; `--estimate` does only this and
+   submits nothing, so it is the way to see the real limit;
+2. splits spectra months into near-equal runs of at most 86,400 fields, and halves a refused request;
+3. stops at the first one-day request that is refused instead of sending the rest, and says what to
+   change: a larger `--time-step` (3 or 6 h), or the ERA5 version (`--expver 1` for older months, `5`
+   for recent ones; the app has an **ERA5 version** selector for the MARS products).
+
+```bash
+python fetch_era5_waves.py --latitude -8.88 --longitude 114.89 --start 2026-07-01 --end 2026-07-31 \
+    --output downloads/test --product wave-spectra --time-step 6 --estimate
+```
 
 ## Definitions used everywhere
 

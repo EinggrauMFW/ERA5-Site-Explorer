@@ -317,8 +317,8 @@ class FakeCds:
     def retrieve(self, dataset, request, target):
         start, end = request["date"].split("/to/")
         days = (dt.date.fromisoformat(end) - dt.date.fromisoformat(start)).days + 1
-        FakeCds.calls.append(days)
-        if days > FakeCds.limit:
+        type(self).calls.append(days)
+        if days > type(self).limit:
             raise Exception("403 Client Error: Forbidden\ncost limits exceeded\nYour request is too large, "
                             "please reduce your selection.")
         with open(target, "wb") as handle:
@@ -358,3 +358,69 @@ def test_a_non_cost_error_stops_without_retrying(tmp_path, monkeypatch, capsys):
                          "--output", str(tmp_path), "--product", "wave-spectra", "--expver", "1"])
     out = capsys.readouterr().out
     assert code == 1 and "Unauthorized" in out and "splitting" not in out
+
+
+# --- cost estimates and not hammering CDS --------------------------------------
+
+def test_cost_limits_are_found_in_any_nesting():
+    reply = {"cost": {"id": "precise_size", "cost": 12.0, "limit": 10.0},
+             "limits": [{"id": "daily", "cost": 3, "limit": 100}], "other": {"x": 1}}
+    found = fetcher.cost_limits(reply)
+    assert ("precise_size", 12.0, 10.0) in found and ("daily", 3.0, 100.0) in found
+    assert fetcher.cost_limits({"error": "500"}) == []
+    assert fetcher.split_into([1, 2, 3, 4, 5, 6, 7], 3) == [[1, 2, 3], [4, 5], [6, 7]]
+
+
+class EstimatingCds(FakeCds):
+    """Reports a cost for the request, and refuses anything over ``limit`` days."""
+    cost_per_day = 2.5
+    limit_value = 10.0
+
+    def estimate_costs(self, dataset, request):
+        start, end = request["date"].split("/to/")
+        days = (dt.date.fromisoformat(end) - dt.date.fromisoformat(start)).days + 1
+        return {"cost": {"id": "size", "cost": days * self.cost_per_day, "limit": self.limit_value}}
+
+
+def run_fetcher(tmp_path, monkeypatch, client_class, extra=()):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "cdsapi", types.SimpleNamespace(Client=client_class))
+    monkeypatch.setattr(fetcher, "fetch_json", lambda url, timeout=30: (_ for _ in ()).throw(OSError("offline")))
+    monkeypatch.setitem(fetcher.MAX_FIELDS, "wave-spectra", 10**9)
+    client_class.calls = []
+    return fetcher.main(["--latitude", "6", "--longitude", "95", "--start", "2020-04-01", "--end", "2020-04-08",
+                         "--output", str(tmp_path), "--product", "wave-spectra", "--expver", "1", *extra])
+
+
+def test_the_estimate_is_used_to_size_requests_before_submitting(tmp_path, monkeypatch, capsys):
+    EstimatingCds.limit = 4                      # refuse above 4 days; the estimate says 8 days = 200% of limit
+    code = run_fetcher(tmp_path, monkeypatch, EstimatingCds)
+    out = capsys.readouterr().out
+    assert code == 0 and "200%" in out and "runs of at most 4" in out
+    assert EstimatingCds.calls == [4, 4]         # the oversized 8-day request was never sent
+
+
+def test_estimate_mode_submits_nothing(tmp_path, monkeypatch, capsys):
+    code = run_fetcher(tmp_path, monkeypatch, EstimatingCds, extra=("--estimate",))
+    out = capsys.readouterr().out
+    assert code == 0 and "cost 20 of limit 10" in out and EstimatingCds.calls == []
+    assert not list(tmp_path.glob("*.nc"))
+
+
+def test_when_one_day_exceeds_the_limit_nothing_is_sent(tmp_path, monkeypatch, capsys):
+    class TooBig(EstimatingCds):
+        cost_per_day = 25.0
+    code = run_fetcher(tmp_path, monkeypatch, TooBig)
+    out = capsys.readouterr().out
+    assert code == 1 and "even one day is estimated" in out and TooBig.calls == []
+
+
+def test_a_refused_single_day_stops_the_run_instead_of_hammering_cds(tmp_path, monkeypatch, capsys):
+    class AlwaysRefuse(FakeCds):
+        limit = 0                                # every request is refused as too costly
+    code = run_fetcher(tmp_path, monkeypatch, AlwaysRefuse)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert AlwaysRefuse.calls == [8, 4, 2, 1]    # one halving path, then stop: no sibling requests
+    assert "single day" in out and "--estimate" in out and "--time-step" in out

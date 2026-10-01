@@ -57,6 +57,13 @@
               {%- endfor %}
             </select>
           </label>
+          <label id="expver-label" hidden>ERA5 version (MARS products)
+            <select id="expver" name="expver">
+              <option value="auto">Automatic: final if older than ~100 days, else preliminary</option>
+              <option value="1">1 · final ERA5</option>
+              <option value="5">5 · preliminary ERA5T (recent months)</option>
+            </select>
+          </label>
           <div class="coordinates">
             <label>Latitude<input id="latitude" name="latitude" type="number" min="-90" max="90" step="any" value="-6.9175" required></label>
             <label>Longitude<input id="longitude" name="longitude" type="number" min="-180" max="180" step="any" value="107.6191" required></label>

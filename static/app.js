@@ -142,6 +142,7 @@ function applyProduct() {
   document.querySelectorAll('.options').forEach(box => { box.hidden = box.dataset.product !== product; });
   $('#product-note').textContent = PRODUCT_NOTES[product];
   $('#time-step').value = String(config.defaultSteps[product]);
+  $('#expver-label').hidden = product === 'single-levels';
   const buffer = $('#buffer');
   buffer.max = config.maxBuffer[product];
   if (Number(buffer.value) > config.maxBuffer[product]) buffer.value = config.maxBuffer[product];
@@ -784,7 +785,7 @@ form.addEventListener('submit', async event => {
   submitButton.disabled = true;
   const product = productSelect.value;
   const payload = {
-    product, time_step: $('#time-step').value,
+    product, time_step: $('#time-step').value, expver: $('#expver').value,
     groups: checkedValues('groups'), params: checkedValues('params'),
     latitude: latInput.value, longitude: lonInput.value,
     start: $('#start').value, end: $('#end').value,

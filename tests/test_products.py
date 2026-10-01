@@ -139,3 +139,14 @@ def test_spectra_dry_run_end_to_end(client):
 def test_index_renders_product_options(client):
     html = client.get("/").get_data(as_text=True)
     assert 'value="wave-spectra"' in html and 'name="groups"' in html and 'name="params"' in html
+
+
+def test_expver_choice_reaches_the_fetcher_for_mars_products_only(client):
+    spectra = client.post("/api/jobs", json=payload(product="wave-spectra", expver="5")).get_json()
+    command = client.submitted[0][1][1]
+    assert spectra["expver"] == "5" and command[command.index("--expver") + 1] == "5"
+    client.post("/api/jobs", json=payload(product="single-levels", expver="5"))
+    assert "--expver" not in client.submitted[1][1][1]
+    client.post("/api/jobs", json=payload(product="wave-spectra"))
+    assert client.submitted[2][1][1][client.submitted[2][1][1].index("--expver") + 1] == "auto"
+    assert client.post("/api/jobs", json=payload(product="wave-spectra", expver="2")).status_code == 400

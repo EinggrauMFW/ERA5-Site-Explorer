@@ -301,6 +301,9 @@ def create_job():
             payload.get("product"), payload.get("groups"), payload.get("params"),
             payload.get("time_step"))
         product = options["product"]
+        expver = str(payload.get("expver") or "auto")
+        if expver not in ("auto", "1", "5"):
+            raise ValueError("ERA5 version must be auto, 1 (final) or 5 (preliminary ERA5T)")
         buffer = parse_number(payload.get("buffer", 0.5), "Buffer", 0,
                               fetch_era5_waves.MAX_BUFFER[product])
         start = parse_date(payload.get("start"), "Start date")
@@ -325,6 +328,8 @@ def create_job():
         "--product", product,
         "--time-step", str(options["time_step"]),
     ]
+    if product != "single-levels":
+        command += ["--expver", expver]
     if options["groups"]:
         command += ["--groups", ",".join(options["groups"])]
     if options["params"]:
@@ -348,6 +353,7 @@ def create_job():
             "groups": options["groups"],
             "params": options["params"],
             "time_step": options["time_step"],
+            "expver": expver,
             "start": start.isoformat(),
             "end": end.isoformat(),
             "dry_run": dry_run,

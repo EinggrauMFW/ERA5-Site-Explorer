@@ -333,9 +333,43 @@ def split_days(days: list[int], per_day: int, max_fields: int | None) -> list[li
     """Split a month's days into runs that stay within ``max_fields`` (at least one day each)."""
     if not max_fields:
         return [days]
-    size = max(1, max_fields // max(per_day, 1))
+    return split_into(days, max_fields // max(per_day, 1))
+
+
+def estimate_cost(client, dataset: str, request: dict):
+    """Ask CDS what a request costs without submitting it; returns the reply or an error dict."""
+    try:
+        return client.estimate_costs(dataset, request)
+    except Exception as exc:  # old-style key, endpoint unavailable, or CDS refuses to estimate
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def cost_limits(reply) -> list[tuple[str, float, float]]:
+    """Find every (name, cost, limit) triple in a CDS cost reply, whatever its nesting."""
+    found: list[tuple[str, float, float]] = []
+
+    def numeric(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    def walk(node, name="cost"):
+        if isinstance(node, dict):
+            if numeric(node.get("cost")) and numeric(node.get("limit")):
+                found.append((str(node.get("id", name)), float(node["cost"]), float(node["limit"])))
+            for key, value in node.items():
+                walk(value, str(key))
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, name)
+
+    walk(reply)
+    return found
+
+
+def split_into(days: list[int], size: int) -> list[list[int]]:
+    """Near-equal runs of at most ``size`` days."""
+    size = max(1, size)
     parts = -(-len(days) // size)
-    base, extra = divmod(len(days), parts)  # near-equal runs, not a full run plus a stub
+    base, extra = divmod(len(days), parts)
     runs, start = [], 0
     for k in range(parts):
         length = base + (1 if k < extra else 0)
@@ -455,6 +489,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expver", choices=["auto", "1", "5"], default="auto",
                         help="MARS experiment version: 1 = ERA5, 5 = preliminary ERA5T")
     parser.add_argument("--dry-run", action="store_true", help="print requests, do not contact CDS")
+    parser.add_argument("--estimate", action="store_true",
+                        help="ask CDS for the cost of the first request of each product and exit; "
+                             "nothing is submitted or downloaded")
     return parser.parse_args(argv)
 
 
@@ -576,6 +613,36 @@ def main(argv: list[str] | None = None) -> int:
     write_provenance(args.output / "provenance.json", provenance)
     client = cdsapi.Client(progress=False)
 
+    # Ask CDS what the first request costs before submitting anything. The reply format is CDS's;
+    # whatever it says is printed so the real limit is visible instead of guessed.
+    first_days = plan[(chunks[0][0], chunks[0][1])][0]
+    probe_dataset, probe_request = request_for(chunks[0][0], chunks[0][1], first_days)
+    reply = estimate_cost(client, probe_dataset, probe_request)
+    print(f"CDS cost estimate for {len(first_days)} day(s) of {args.product}: "
+          f"{json.dumps(reply, default=str)[:600]}", flush=True)
+    triples = cost_limits(reply)
+    provenance["cost_estimate"] = {"days": len(first_days), "reply": reply}
+    if args.estimate:
+        for name, cost, limit in triples:
+            print(f"  {name}: cost {cost:g} of limit {limit:g} ({cost / limit:.0%})", flush=True)
+        if not triples:
+            print("  (no cost/limit pair found in the reply above)", flush=True)
+        return 0
+    worst = max((cost / limit for _, cost, limit in triples if limit > 0), default=0.0)
+    if worst > 1.0:
+        per_day = worst / len(first_days)
+        fit = int(1.0 / per_day)
+        if fit < 1:
+            print(f"error: even one day is estimated at {per_day:.0%} of a CDS cost limit, so no split of "
+                  "the period can work. Reduce the request itself: a larger time step (3 or 6 h), fewer "
+                  "variables or parameters, or a different expver.", flush=True)
+            write_provenance(args.output / "provenance.json", provenance)
+            return 1
+        print(f"CDS estimates the first request at {worst:.0%} of its limit; using runs of at most {fit} "
+              "day(s).", flush=True)
+        plan = {key: split_into(days_, fit) for key, days_ in
+                ((k, sum(v, [])) for k, v in plan.items())}
+
     def retrieve(dataset: str, request: dict, target: Path, label: str) -> dict:
         record = {"dataset": dataset, "request": request, "file": target.name}
         if target.exists() and target.stat().st_size > 0:
@@ -606,8 +673,16 @@ def main(argv: list[str] | None = None) -> int:
                 middle = len(days) // 2
                 print(f"{tag}: CDS cost limit exceeded; splitting into {middle} + {len(days) - middle} "
                       "days and retrying", flush=True)
-                return (download_days(year, month, days[:middle], month_days, label)
-                        + download_days(year, month, days[middle:], month_days, label))
+                first_half = download_days(year, month, days[:middle], month_days, label)
+                if any(str(r["status"]).startswith("failed") for r in first_half):
+                    return first_half  # the smaller request failed too: do not keep sending requests
+                return first_half + download_days(year, month, days[middle:], month_days, label)
+            if is_cost_error(exc):
+                print(f"error: CDS refused a request of a single day ({tag}) as too costly, so shortening "
+                      "the period cannot fix it. Something else in the request is too large for CDS: try a "
+                      "larger --time-step (3 or 6 h, as in the WaveSpectrum-ERA-5 example), --expver 1 for "
+                      "older months or --expver 5 for recent ones, and run with --estimate to see the "
+                      "limits CDS reports.", flush=True)
             print(f"error: CDS request for {tag} failed: {exc}", flush=True)
             record = {"dataset": dataset, "request": request, "file": target.name, "status": f"failed: {exc}"}
         record["month"] = f"{year:04d}-{month:02d}"
