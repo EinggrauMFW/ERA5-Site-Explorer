@@ -309,6 +309,11 @@ python -m pytest -q
 The suite runs offline. Numerical tests compare against hand-derived values and, for extremes, a synthetic
 process with a known GPD tail.
 
+## License
+
+The code is released under the [MIT License](LICENSE). The licence covers the code only: ERA5 data you
+download stays under the Copernicus licence below.
+
 ## Attribution
 
 Contains modified Copernicus Climate Change Service information. ERA5 data: Hersbach, H. et al. (2023),
