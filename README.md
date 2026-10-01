@@ -9,15 +9,18 @@ Two data routes are kept strictly separate. **Option A** uses ERA5 single-level 
 A cross-check panel compares them but never merges them. The basemap is OpenFreeMap (OpenStreetMap data)
 and needs no account or token.
 
-> **Status.** The numerics are tested on synthetic data with known answers (192 tests). No real CDS
-> download has been run through this app, and Option A and Option B have not been compared on real data.
+> **Status.** The numerics are tested on synthetic data with known answers (193 tests, `python -m pytest -q`).
+> Option A has completed real CDS downloads (2025 single levels, under one year; the screenshots below come
+> from one). Option B has no completed job: five were refused by CDS as too large, one was cancelled, and
+> one 6-hourly July 2026 job downloaded its 16 files but was marked failed by an app restart. Option A and
+> Option B have not been compared on real data, and no multi-year record has been analysed.
 > [docs/verification.md](docs/verification.md) lists what was verified and what is still open. Treat results
 > as a screening aid, not a resource assessment.
 
 ## Screenshots
 
 All four are from one Option A demonstration job: ERA5 single levels, hourly, 2025 (0.93 years, 8,184 records),
-near −8.75°, 119.28° (Flores Sea). The record is far shorter than the 10 years the app itself asks for, and the
+near −8.75°, 119.28° (Komodo–Flores area). The record is far shorter than the 10 years the app itself asks for, and the
 nearest ocean node is 36.4 km from the site, so the numbers illustrate the interface and are not a resource
 estimate.
 
