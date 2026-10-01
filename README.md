@@ -33,7 +33,7 @@ estimate.
 
 ## Setup
 
-1. Configure CDS credentials in `~/.cdsapirc` and accept the ERA5 licence on the CDS website.
+1. Set up CDS API access (next section): a `~/.cdsapirc` file and an accepted licence for each dataset.
    Credentials never go in this repository.
 2. Install and run:
 
@@ -56,6 +56,36 @@ Optional environment variables (see `.env.example`; they are not loaded automati
 cross-check test report as unavailable; everything else works.
 
 Developed and tested on Python 3.13 and Windows 11; other versions were not tried.
+
+### CDS API access
+
+Downloads use the Copernicus Climate Data Store (CDS) API through the `cdsapi` package. The official
+guide is <https://cds.climate.copernicus.eu/how-to-api>; in short:
+
+1. Register for a CDS account and log in.
+2. Copy your personal access token (the guide shows where) into a file named `.cdsapirc` in your home
+   folder (`~/.cdsapirc`; on Windows `C:\Users\<you>\.cdsapirc`) with exactly these two lines:
+
+   ```
+   url: https://cds.climate.copernicus.eu/api
+   key: <PERSONAL-ACCESS-TOKEN>
+   ```
+
+3. Install `cdsapi` (it is in `requirements.txt`; the CDS guide recommends the latest version, 0.7.7 or
+   newer: `pip install "cdsapi>=0.7.7"`).
+4. Open each dataset you use and accept its terms of use on its download page, once, while logged in.
+   CDS refuses requests for a dataset whose licence you have not accepted. This app uses two:
+   [ERA5 hourly data on single levels](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels)
+   (Option A) and [ERA5 complete](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-complete)
+   (Option B and the MARS products).
+
+The token is a password: keep it out of this repository, the app and any logs you share. The app reads the
+file through `cdsapi` and never stores it; `provenance.json` records no credentials.
+
+The CDS guide also describes a newer package, `ecmwf-datastores-client`, which it marks as incubating and
+says you need not migrate to. This app uses the legacy `cdsapi`. If a download fails, CDS keeps a list of
+common error messages for requests (linked from the guide); see also [CDS cost limit](#cds-cost-limit)
+below for the most common one here.
 
 ## Download products
 
