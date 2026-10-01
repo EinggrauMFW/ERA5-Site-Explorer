@@ -21,7 +21,8 @@ and needs no account or token.
 2. Install and run:
 
 ```bash
-cd ecmwf-map-app
+git clone https://github.com/EinggrauMFW/ERA5-Site-Explorer.git
+cd ERA5-Site-Explorer
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt     # Windows: .venv\Scripts\pip
 .venv/bin/python app.py                       # Windows: .venv\Scripts\python

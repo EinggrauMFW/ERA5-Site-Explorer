@@ -459,7 +459,7 @@ def estimate_size_mb(options: dict, area: list[float], days: int) -> float:
 # --- catalogue checks and provenance ---------------------------------------------
 
 def fetch_json(url: str, timeout: int = 30):
-    request = urllib.request.Request(url, headers={"User-Agent": "ecmwf-map-app"})
+    request = urllib.request.Request(url, headers={"User-Agent": "ERA5-Site-Explorer"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
@@ -599,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
 
     provenance = {
         "schema": 1,
-        "tool": "ecmwf-map-app fetch_era5_waves.py",
+        "tool": "ERA5-Site-Explorer fetch_era5_waves.py",
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "completed_utc": None,
         "dry_run": args.dry_run,

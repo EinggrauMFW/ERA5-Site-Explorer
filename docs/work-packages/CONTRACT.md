@@ -1,6 +1,6 @@
 # Work-package contract (read this first, every time)
 
-You are implementing ONE work package of `ecmwf-map-app`, a local Flask + vanilla-JS tool that
+You are implementing ONE work package of `ERA5-Site-Explorer`, a local Flask + vanilla-JS tool that
 downloads ERA5 wave data and analyses it for wave-energy resource work. The orchestrator (Claude)
 reviews and approves your work. Other agents work in parallel on other packages in the same folder.
 
