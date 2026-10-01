@@ -243,10 +243,12 @@ def auto_expver(last_day: dt.date, today: dt.date | None = None) -> str:
 
 
 def build_request(year: int, month: int, days: list[int], area: list[float],
-                  options: dict | None = None, expver: str = "1") -> tuple[str, dict]:
-    """Return ``(dataset, request)`` for one month of the chosen product."""
+                  options: dict | None = None, expver: str = "1",
+                  hours: list[int] | None = None) -> tuple[str, dict]:
+    """Return ``(dataset, request)`` for some days of one month (all time steps unless ``hours``)."""
     options = options or normalise_options(DEFAULT_PRODUCT)
-    product, hours = options["product"], hours_for(options["time_step"])
+    product = options["product"]
+    hours = hours if hours is not None else hours_for(options["time_step"])
 
     if product == "single-levels":
         variables = [v for group in options["groups"] for v in VARIABLE_GROUPS[group]]
@@ -307,10 +309,19 @@ def build_bathymetry_request(year: int, month: int, day: int, area: list[float])
 
 
 def output_name(product: str, year: int, month: int, days: list[int] | None = None,
-                whole_month: bool = True) -> str:
+                whole_month: bool = True, hours: list[int] | None = None) -> str:
+    """File name; ``hours`` is given only when the request covered a subset of the time steps."""
     prefix = {"single-levels": "era5", "mars-surface": "era5-mars", "wave-spectra": "era5-spectra"}
     suffix = "" if whole_month or not days else f"_d{days[0]:02d}-{days[-1]:02d}"
+    if hours:
+        suffix += f"_h{hours[0]:02d}-{hours[-1]:02d}"
     return f"{prefix[product]}_{year:04d}-{month:02d}{suffix}.nc"
+
+
+# Evidence from CDS (probed 2026-10-01): one day of 6-hourly spectra (4 times) was accepted and one
+# day of hourly spectra (24 times) was refused as too costly, so the number of time steps in a
+# request matters on its own. Four is the largest count known to be accepted.
+KNOWN_GOOD_HOURS = 4
 
 
 # CDS rejects MARS requests above a cost limit counted in fields (date x time x direction x
@@ -566,11 +577,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Estimated size ≈ {total_mb:,.1f} MB uncompressed (float32); files on disk are usually smaller.",
           flush=True)
 
-    def request_for(year: int, month: int, days: list[int]) -> tuple[str, dict]:
+    if args.product == "wave-spectra" and len(hours_for(options["time_step"])) > KNOWN_GOOD_HOURS:
+        print(f"Note: a CDS probe accepted {KNOWN_GOOD_HOURS} time steps per spectra request and refused 24. "
+              f"This run has {len(hours_for(options['time_step']))} per day, so real downloads split each day "
+              f"into requests of at most {KNOWN_GOOD_HOURS} time steps unless CDS accepts more.", flush=True)
+
+    def request_for(year: int, month: int, days: list[int],
+                    hours: list[int] | None = None) -> tuple[str, dict]:
         expver = args.expver
         if expver == "auto":
             expver = auto_expver(dt.date(year, month, days[-1]))
-        return build_request(year, month, days, area, options, expver)
+        return build_request(year, month, days, area, options, expver, hours)
 
     first_year, first_month, first_days = chunks[0]
     bathymetry = build_bathymetry_request(first_year, first_month, first_days[0], area) \
@@ -663,6 +680,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Ask CDS what the first request costs before submitting anything. The reply format is CDS's;
     # whatever it says is printed so the real limit is visible instead of guessed.
+    all_hours = hours_for(options["time_step"])
+    # What CDS has accepted so far, learned from refusals and kept for the rest of the run.
+    state = {"hours": len(all_hours), "cap_days": 31}
     first_days = plan[(chunks[0][0], chunks[0][1])][0]
     probe_dataset, probe_request = request_for(chunks[0][0], chunks[0][1], first_days)
     reply = estimate_cost(client, probe_dataset, probe_request)
@@ -688,8 +708,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"CDS estimates the first request at {worst:.0%} of its limit; using runs of at most {fit} "
               "day(s).", flush=True)
-        plan = {key: split_into(days_, fit) for key, days_ in
-                ((k, sum(v, [])) for k, v in plan.items())}
+        state["cap_days"] = fit
 
     def retrieve(dataset: str, request: dict, target: Path, label: str) -> dict:
         record = {"dataset": dataset, "request": request, "file": target.name}
@@ -707,35 +726,51 @@ def main(argv: list[str] | None = None) -> int:
         record["sha256"] = sha256_of(target)
         return record
 
-    def download_days(year, month, days, month_days, label) -> list[dict]:
-        """Download ``days``; if CDS refuses it as too costly, halve it and retry."""
-        whole = days == month_days
-        dataset, request = request_for(year, month, days)
-        target = args.output / output_name(args.product, year, month, days, whole)
-        tag = label if whole else f"{label} days {days[0]:02d}-{days[-1]:02d}"
+    max_fields = MAX_FIELDS.get(args.product)
+    fields_per_hour = max(fields_per_day(options) // max(len(all_hours), 1), 1)
+
+    def fit_unit(days: list[int], hours: list[int]) -> list[tuple[list[int], list[int]]]:
+        """Split (days, hours) so each piece respects the shape CDS is known to accept."""
+        hour_runs = split_into(hours, state["hours"])
+        by_fields = max_fields // (max(len(r) for r in hour_runs) * fields_per_hour) if max_fields else 31
+        day_runs = split_into(days, max(1, min(state["cap_days"], by_fields)))
+        return [(d, h) for d in day_runs for h in hour_runs]
+
+    def attempt(year, month, days, hours, month_days, label) -> dict | None:
+        """Try one request. Returns its record, or None if CDS refused it and the shape was reduced."""
+        subset = hours if len(hours) < len(all_hours) else None
+        dataset, request = request_for(year, month, days, hours)
+        target = args.output / output_name(args.product, year, month, days, days == month_days, subset)
+        tag = label
+        if days != month_days:
+            tag += f" days {days[0]:02d}-{days[-1]:02d}"
+        if subset:
+            tag += f" hours {hours[0]:02d}-{hours[-1]:02d}"
         try:
             record = retrieve(dataset, request, target, tag)
         except Exception as exc:  # cdsapi raises plain Exceptions for auth/licence/queue errors
             target.with_name(target.name + ".part").unlink(missing_ok=True)
-            if is_cost_error(exc) and len(days) > 1:
-                middle = len(days) // 2
-                print(f"{tag}: CDS cost limit exceeded; splitting into {middle} + {len(days) - middle} "
-                      "days and retrying", flush=True)
-                first_half = download_days(year, month, days[:middle], month_days, label)
-                if any(str(r["status"]).startswith("failed") for r in first_half):
-                    return first_half  # the smaller request failed too: do not keep sending requests
-                return first_half + download_days(year, month, days[middle:], month_days, label)
             if is_cost_error(exc):
-                print(f"error: CDS refused a request of a single day ({tag}) as too costly, so shortening "
-                      "the period cannot fix it. Something else in the request is too large for CDS: try a "
-                      "larger --time-step (3 or 6 h, as in the WaveSpectrum-ERA-5 example), --expver 1 for "
-                      "older months or --expver 5 for recent ones, and run with --estimate to see the "
-                      "limits CDS reports.", flush=True)
+                if len(hours) > KNOWN_GOOD_HOURS:
+                    state["hours"] = max(KNOWN_GOOD_HOURS, len(hours) // 2)
+                    print(f"{tag}: CDS cost limit exceeded; using at most {state['hours']} time steps per "
+                          "request from now on", flush=True)
+                    return None
+                if len(days) > 1:
+                    state["cap_days"] = max(1, len(days) // 2)
+                    print(f"{tag}: CDS cost limit exceeded; using at most {state['cap_days']} day(s) per "
+                          "request from now on", flush=True)
+                    return None
+                print(f"error: CDS refused the smallest request ({tag}: 1 day, {len(hours)} time step(s)) "
+                      "as too costly, so splitting further cannot fix it. Something else in the request is "
+                      "too large: try a larger --time-step, a different --expver, or run --probe / "
+                      "--estimate to see what CDS accepts.", flush=True)
             print(f"error: CDS request for {tag} failed: {exc}", flush=True)
             record = {"dataset": dataset, "request": request, "file": target.name, "status": f"failed: {exc}"}
         record["month"] = f"{year:04d}-{month:02d}"
         record["days"] = [days[0], days[-1]]
-        return [record]
+        record["hours"] = [hours[0], hours[-1]]
+        return record
 
     failure = False
     for index, (year, month, days) in enumerate(chunks, start=1):
@@ -745,16 +780,26 @@ def main(argv: list[str] | None = None) -> int:
             kind = "ERA5 final" if first_request["expver"] == "1" else "preliminary ERA5T"
             print(f"{label}: using expver {first_request['expver']} ({kind})", flush=True)
         whole_target = args.output / output_name(args.product, year, month)
-        subs = [days] if whole_target.exists() and whole_target.stat().st_size > 0 else plan[(year, month)]
-        if len(subs) > 1:
-            print(f"{label}: split into {len(subs)} requests to stay under the CDS cost limit", flush=True)
-        for sub in subs:
-            records = download_days(year, month, sub, days, label)
-            provenance["requests"].extend(records)
+        if whole_target.exists() and whole_target.stat().st_size > 0:
+            queue = [(days, all_hours)]
+        else:
+            queue = fit_unit(days, all_hours)
+        if len(queue) > 1:
+            print(f"{label}: split into {len(queue)} requests to stay under the CDS cost limit", flush=True)
+        while queue and not failure:
+            unit_days, unit_hours = queue.pop(0)
+            pieces = fit_unit(unit_days, unit_hours)
+            if len(pieces) > 1:  # the shape learned meanwhile is smaller than this unit
+                queue = pieces + queue
+                continue
+            record = attempt(year, month, unit_days, unit_hours, days, label)
+            if record is None:  # refused: re-fit this unit to the reduced shape and try again
+                queue = fit_unit(unit_days, unit_hours) + queue
+                continue
+            provenance["requests"].append(record)
             write_provenance(args.output / "provenance.json", provenance)
-            if any(str(r["status"]).startswith("failed") for r in records):
+            if str(record["status"]).startswith("failed"):
                 failure = True
-                break
         if failure:
             break
 

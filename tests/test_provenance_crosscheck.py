@@ -335,7 +335,7 @@ def test_refused_requests_are_halved_until_cds_accepts_them(tmp_path, monkeypatc
     code = fetcher.main(["--latitude", "6", "--longitude", "95", "--start", "2020-04-01", "--end", "2020-04-08",
                          "--output", str(tmp_path), "--product", "wave-spectra", "--expver", "1"])
     out = capsys.readouterr().out
-    assert code == 0 and "cost limit exceeded; splitting" in out
+    assert code == 0 and "cost limit exceeded; using at most" in out
     assert FakeCds.calls[0] == 8 and sorted(c for c in FakeCds.calls if c <= 2) == [2, 2, 2, 2]
     files = sorted(p.name for p in tmp_path.glob("era5-spectra_*.nc"))
     assert files[0] == "era5-spectra_2020-04_d01-02.nc" and len(files) == 4
@@ -423,7 +423,7 @@ def test_a_refused_single_day_stops_the_run_instead_of_hammering_cds(tmp_path, m
     out = capsys.readouterr().out
     assert code == 1
     assert AlwaysRefuse.calls == [8, 4, 2, 1]    # one halving path, then stop: no sibling requests
-    assert "single day" in out and "--estimate" in out and "--time-step" in out
+    assert "smallest request" in out and "--probe" in out and "--time-step" in out
 
 
 class ModernClient:
@@ -482,3 +482,61 @@ def test_probe_mode_prints_a_report_and_downloads_nothing(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert code == 0 and "Probing CDS" in out and "REFUSED" in out and "accepted" in out
     assert not list(tmp_path.glob("*.nc"))
+
+
+# --- the hourly case found by probing CDS --------------------------------------
+
+class TimeLimitedCds(FakeCds):
+    """Accepts at most 4 time steps per request, like the probe result: 6-hourly ok, hourly refused."""
+    limit = 10**6
+    calls = []
+    times = []
+
+    def retrieve(self, dataset, request, target):
+        steps = len(request["time"].split("/"))
+        type(self).times.append(steps)
+        if steps > 4:
+            raise Exception("403 Client Error: Forbidden\ncost limits exceeded\nYour request is too large.")
+        super().retrieve(dataset, request, target)
+
+
+def test_hourly_spectra_are_split_on_the_time_axis_and_the_shape_is_remembered(tmp_path, monkeypatch, capsys):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "cdsapi", types.SimpleNamespace(Client=TimeLimitedCds))
+    monkeypatch.setattr(fetcher, "fetch_json", lambda url, timeout=30: (_ for _ in ()).throw(OSError("offline")))
+    TimeLimitedCds.calls, TimeLimitedCds.times = [], []
+    code = fetcher.main(["--latitude", "6", "--longitude", "95", "--start", "2020-04-01", "--end", "2020-04-30",
+                         "--output", str(tmp_path), "--product", "wave-spectra", "--time-step", "1",
+                         "--expver", "1"])
+    out = capsys.readouterr().out
+    assert code == 0
+    refusals = [t for t in TimeLimitedCds.times if t > 4]
+    assert refusals == [24, 12, 6]                    # 24 -> 12 -> 6 -> 4: reduced three times, then remembered
+    assert max(t for t in TimeLimitedCds.times[len(refusals):]) <= 4
+    assert "at most 4 time steps per request" in out
+    files = sorted(p.name for p in tmp_path.glob("era5-spectra_*.nc"))
+    assert all("_h" in name for name in files) and any("_h00-03" in name for name in files)
+    record = json.loads((tmp_path / "provenance.json").read_text(encoding="utf-8"))
+    hours = {tuple(r["hours"]) for r in record["requests"]}
+    assert (0, 3) in hours and (20, 23) in hours      # all 24 hours covered by runs of four
+    covered = sorted({h for r in record["requests"] for h in range(r["hours"][0], r["hours"][1] + 1)})
+    assert covered == list(range(24))
+    assert all(r["status"] == "downloaded" for r in record["requests"])
+
+
+def test_six_hourly_spectra_are_not_split_on_the_time_axis(tmp_path, monkeypatch):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "cdsapi", types.SimpleNamespace(Client=TimeLimitedCds))
+    monkeypatch.setattr(fetcher, "fetch_json", lambda url, timeout=30: (_ for _ in ()).throw(OSError("offline")))
+    TimeLimitedCds.calls, TimeLimitedCds.times = [], []
+    code = fetcher.main(["--latitude", "6", "--longitude", "95", "--start", "2020-04-01", "--end", "2020-04-30",
+                         "--output", str(tmp_path), "--product", "wave-spectra", "--expver", "1"])
+    assert code == 0 and set(TimeLimitedCds.times) == {4}
+    assert [p.name for p in tmp_path.glob("era5-spectra_*.nc")] == ["era5-spectra_2020-04.nc"]
+
+
+def test_output_names_carry_the_hour_subset():
+    assert fetcher.output_name("wave-spectra", 2026, 7, [1, 2], False, [0, 1, 2, 3]) == "era5-spectra_2026-07_d01-02_h00-03.nc"
+    assert fetcher.output_name("wave-spectra", 2026, 7) == "era5-spectra_2026-07.nc"

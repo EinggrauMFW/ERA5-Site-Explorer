@@ -45,26 +45,30 @@ period, file hashes, software versions, attribution; no credentials). The fetche
 own: `python fetch_era5_waves.py --help`.
 
 **CDS cost limit.** CDS refuses MARS requests above a cost limit and answers "cost limits exceeded".
-The limit is not simply the number of days: a one-day hourly spectra request (17,280 fields) was
-refused while the 6-hourly month in WaveSpectrum-ERA-5 (86,400 fields) worked, so something else in the
-request counts (the hourly time list, `expver` 5 for recent months, or the account's own limits are the
-suspects; this has not been pinned down). The fetcher therefore:
+A probe on 2026-10-01 (`--probe`, below) showed that **one day of 6-hourly spectra is accepted for either
+`expver` and for old and recent dates, while one day of hourly spectra is refused**. So the number of
+time steps in a request matters by itself, not only the number of fields: a 6-hourly month (86,400
+fields) works and a single hourly day (17,280 fields) does not. What exactly CDS counts is not known.
+The fetcher therefore adapts as it goes and remembers what CDS accepts for the rest of the run:
 
-1. asks CDS for a cost estimate before submitting (`estimate_costs` on the client wrapped by `cdsapi`),
-   prints CDS's reply, and sizes the requests from it when the reply contains a cost and a limit;
-   `--estimate` does only this and submits nothing. The costing endpoint answers HTTP 500 for MARS
-   requests in the tests made without credentials, so it may not help; if so use `--probe`, which submits
-   five one-day test requests (as configured, hourly, 6-hourly, the other `expver`, and an old final
-   date), reports which CDS accepts or refuses, and cancels every accepted one at once, so nothing is
-   downloaded;
-2. splits spectra months into near-equal runs of at most 86,400 fields, and halves a refused request;
-3. stops at the first one-day request that is refused instead of sending the rest, and says what to
-   change: a larger `--time-step` (3 or 6 h), or the ERA5 version (`--expver 1` for older months, `5`
-   for recent ones; the app has an **ERA5 version** selector for the MARS products).
+1. spectra months are cut into near-equal runs of days of at most 86,400 fields;
+2. a refused request first has its time steps reduced (24 → 12 → 6 → 4; four is the largest count seen
+   accepted), then its days halved, and the learned shape is applied to every later request, so a
+   refusal is not repeated. An hourly month becomes requests of 4 time steps each, named like
+   `era5-spectra_2026-07_d01-08_h00-03.nc`; the analysis merges the files by time;
+3. it stops at the first request of one day and one small time list that CDS still refuses, and says what
+   to change (a larger `--time-step`, the ERA5 version `--expver 1` or `5`; the app has an **ERA5
+   version** selector for the MARS products);
+4. `--estimate` asks CDS for a cost estimate and sizes requests from it if the reply has a cost and a
+   limit (the costing endpoint answered HTTP 500 without credentials, and `cdsapi`'s wrapped client is
+   needed to reach it); `--probe` submits five one-day test requests, reports which are accepted or
+   refused, and cancels each accepted one at once, so nothing is downloaded.
+
+Hourly spectra are slow because of this (about six requests per day). Unless you need hourly spectra, use
+a 3-hour or 6-hour step.
 
 ```bash
-python fetch_era5_waves.py --latitude -8.88 --longitude 114.89 --start 2026-07-01 --end 2026-07-31 \
-    --output downloads/test --product wave-spectra --time-step 6 --estimate
+python fetch_era5_waves.py --latitude -8.88 --longitude 114.89 --start 2026-07-01 --end 2026-07-31     --output downloads/test --product wave-spectra --time-step 6 --probe
 ```
 
 ## Definitions used everywhere
