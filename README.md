@@ -14,6 +14,20 @@ and needs no account or token.
 > [docs/verification.md](docs/verification.md) lists what was verified and what is still open. Treat results
 > as a screening aid, not a resource assessment.
 
+## Screenshots
+
+All four are from one Option A demonstration job: ERA5 single levels, hourly, 2025 (0.93 years, 8,184 records),
+near −8.75°, 119.28° (Flores Sea). The record is far shorter than the 10 years the app itself asks for, and the
+nearest ocean node is 36.4 km from the site, so the numbers illustrate the interface and are not a resource
+estimate.
+
+| | |
+|---|---|
+| ![Site request: pick a site on the map and choose variables](docs/screenshots/01-site-request-map.jpg) | ![Wave analysis: key numbers, record warning and flux statistics](docs/screenshots/02-analysis-overview.jpg) |
+| **Site request.** Click the map, choose the data route, variables, time step and period. Grid nodes are drawn after a download, coloured by mean flux. | **Analysis.** Key numbers, the short-record warning and deep-water flux statistics (flux computed per record, then averaged). |
+| ![Hm0–Te scatter diagram and wave rose](docs/screenshots/03-scatter-wave-rose.jpg) | ![Grid nodes table for the downloaded box](docs/screenshots/04-grid-nodes.jpg) |
+| **Distributions.** Hm0–Te scatter with the share of records per bin, and the wave rose by hours and by energy. | **Grid nodes.** Every ERA5 node in the box with depth, mean flux, Hm0 and Te. Neighbouring nodes here differ a lot, so the choice of node matters. |
+
 ## Setup
 
 1. Configure CDS credentials in `~/.cdsapirc` and accept the ERA5 licence on the CDS website.
