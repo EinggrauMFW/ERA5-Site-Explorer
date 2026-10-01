@@ -1,4 +1,4 @@
-# ECMWF ERA5 Map App
+# ERA5 Site Explorer
 
 A local web app for wave-energy resource work. Pick a site on a map, download ERA5 wave data from
 Copernicus CDS, and analyse it at any grid node of the download: energy flux, climatology, scatter tables,
