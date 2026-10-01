@@ -3,65 +3,228 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ECMWF Site Explorer</title>
+    <meta name="color-scheme" content="light dark">
+    <title>ERA5 Site Explorer</title>
     <link rel="preconnect" href="https://tiles.openfreemap.org">
-    <link href="https://unpkg.com/maplibre-gl@5.7.3/dist/maplibre-gl.css" rel="stylesheet">
+    <link href="https://unpkg.com/maplibre-gl@5.7.3/dist/maplibre-gl.css" rel="stylesheet"
+          integrity="sha384-gNYNsUmuZqDYiT3gbirWTV5K7rt71RoveS/yXAaU09d4ZUmeDVTD3XoqB6uJAIFR" crossorigin="anonymous">
+    <link href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css" rel="stylesheet"
+          integrity="sha384-IfV0B7MIOYuO95kO9G5ySKPz/85zqFNOAs8iy4tkK5zd9izhJAB8b7lHrwYqqmYE" crossorigin="anonymous">
     <link href="{{ url_for('static', filename='app.css') }}" rel="stylesheet">
+    {%- for name in plugin_styles %}
+    <link href="{{ url_for('static', filename='plugins/' + name + '.css') }}" rel="stylesheet">
+    {%- endfor %}
+    <script>
+      /* Apply a saved theme before first paint so there is no flash. */
+      try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
   </head>
   <body>
-    <main>
+    <header class="topbar">
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span><span>ERA5 Site Explorer</span></a>
+      <nav class="topnav" aria-label="Sections">
+        <a href="#request">Request</a>
+        <a href="#status-card" data-needs="status" class="is-off">Status</a>
+        <a href="#analysis" data-needs="analysis" class="is-off">Analysis</a>
+        <a href="#recent" data-needs="recent" class="is-off">History</a>
+        <a href="#crosscheck">Cross-check</a>
+      </nav>
+      <button id="theme-toggle" type="button" class="icon-btn" aria-label="Theme: automatic" title="Theme: automatic">◐</button>
+    </header>
+
+    <main id="top">
       <section class="intro">
         <p class="eyebrow">ERA5 · Wave resource data</p>
         <h1>Choose a site.<br>Bring the ocean into focus.</h1>
-        <p class="lede">Click the map to define a study point, choose a date range, and retrieve monthly ECMWF ERA5 wave and wind fields from Copernicus CDS.</p>
+        <p class="lede">Click the map to define a study point, choose a period, and download ECMWF ERA5 wave data from Copernicus CDS. Analyse the nearest ocean node, or any node in the box, from integrated parameters (Option A) or full 2D spectra (Option B).</p>
       </section>
 
-      <section class="workspace">
+      <section id="request" class="workspace">
         <div class="map-wrap">
           <div id="map"></div>
+          <div class="map-loader" id="map-loader" role="status">Loading map…</div>
           <div class="map-note" id="map-note">Click anywhere to place your site</div>
+          <div class="map-legend" id="map-legend" hidden>
+            <span id="legend-label">Mean flux J (kW/m)</span>
+            <span class="ramp" aria-hidden="true"></span>
+            <span class="legend-ends"><span id="legend-min">0</span><span id="legend-max">1</span></span>
+            <span class="legend-land"><i></i> land / no data</span>
+          </div>
         </div>
 
-        <form id="fetch-form">
-          <div class="form-heading">
-            <span>01</span>
+        <form id="fetch-form" class="request-form">
+          <div class="card-head">
+            <span class="step">01</span>
             <h2>Site request</h2>
           </div>
-          <div class="coordinates">
-            <label>Latitude<input id="latitude" name="latitude" type="number" min="-90" max="90" step="any" value="-6.9175" required></label>
-            <label>Longitude<input id="longitude" name="longitude" type="number" min="-180" max="180" step="any" value="107.6191" required></label>
+
+          <div class="field">
+            <span class="field-label" id="product-label">Data product</span>
+            <div id="product-segmented" class="segmented" role="radiogroup" aria-labelledby="product-label"></div>
+            <select id="product" name="product" class="sr-only" tabindex="-1" aria-hidden="true">
+              {%- for key, label in products.items() %}
+              <option value="{{ key }}">{{ label }}</option>
+              {%- endfor %}
+            </select>
+            <p id="product-note" class="hint"></p>
+          </div>
+
+          <fieldset id="opts-single-levels" class="options" data-product="single-levels">
+            <legend>Variables</legend>
+            {%- for key in groups %}
+            <label class="check"><input type="checkbox" name="groups" value="{{ key }}"{% if key in default_groups %} checked{% endif %}><span>{{ group_labels[key] }}</span></label>
+            {%- endfor %}
+          </fieldset>
+          <fieldset id="opts-mars-surface" class="options" data-product="mars-surface" hidden>
+            <legend>Parameters (analysis, oper stream)</legend>
+            {%- for code, name in mars_params.items() %}
+            <label class="check"><input type="checkbox" name="params" value="{{ code }}"{% if code in default_params %} checked{% endif %}><span>{{ name }} <small>{{ code }}</small></span></label>
+            {%- endfor %}
+          </fieldset>
+
+          <div class="row-2">
+            <label class="field">Time step
+              <select id="time-step" name="time_step">
+                {%- for step in time_steps %}
+                <option value="{{ step }}">{{ step }} h</option>
+                {%- endfor %}
+              </select>
+            </label>
+            <label class="field" id="expver-label" hidden>ERA5 version
+              <select id="expver" name="expver">
+                <option value="auto">Automatic</option>
+                <option value="1">1 · final</option>
+                <option value="5">5 · preliminary</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="group-title">Site</div>
+          <div class="row-2">
+            <label class="field">Latitude<input id="latitude" name="latitude" type="number" min="-90" max="90" step="any" value="-6.9175" required></label>
+            <label class="field">Longitude<input id="longitude" name="longitude" type="number" min="-180" max="180" step="any" value="107.6191" required></label>
           </div>
           <div class="selection-readout" aria-live="polite">
             <span>Selected study point</span>
             <strong id="selected-coordinate">−6.91750, 107.61910</strong>
             <small id="selected-area">Loading study area…</small>
           </div>
-          <div class="coordinates">
-            <label>Start date<input id="start" name="start" type="date" required></label>
-            <label>End date<input id="end" name="end" type="date" required></label>
+          <label class="field">Area buffer <span class="unit">degrees</span><input id="buffer" name="buffer" type="number" min="0" max="10" step="0.1" value="0.5" required></label>
+
+          <div class="group-title">Period</div>
+          <div class="row-2">
+            <label class="field">Start date<input id="start" name="start" type="date" min="{{ earliest_date }}" max="{{ latest_date }}" required></label>
+            <label class="field">End date<input id="end" name="end" type="date" min="{{ earliest_date }}" max="{{ latest_date }}" required></label>
           </div>
-          <label>Area buffer <span class="unit">degrees</span><input id="buffer" name="buffer" type="number" min="0" max="10" step="0.1" value="0.5" required></label>
+
           <label class="check"><input id="dry-run" type="checkbox"><span>Preview request only (no CDS download)</span></label>
-          <button id="submit" type="submit">Fetch ERA5 data <span>↗</span></button>
-          <p class="hint">Downloads require a configured <code>~/.cdsapirc</code> and accepted ERA5 licence.</p>
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+          <button id="submit" type="submit" class="btn primary">Fetch ERA5 data <span aria-hidden="true">↗</span></button>
+          <p class="hint">Downloads need a configured <code>~/.cdsapirc</code> and an accepted ERA5 licence. ERA5 is available up to {{ latest_date }}. <span id="limits"></span></p>
         </form>
       </section>
 
-      <section id="status-card" class="status-card" hidden>
-        <div class="form-heading"><span>02</span><h2>Request status</h2></div>
-        <div class="status-line"><strong id="status">Queued</strong><span id="job-id"></span></div>
+      <section id="status-card" class="card status-card" hidden>
+        <div class="card-head">
+          <span class="step">02</span>
+          <h2>Request status</h2>
+          <span id="status" class="pill pill-queued">Queued</span>
+          <span id="job-id" class="job-id"></span>
+        </div>
+        <div class="progress" id="progress" hidden><span></span></div>
         <pre id="log"></pre>
         <div id="files" class="files"></div>
+        <div class="job-actions">
+          <button id="cancel" type="button" class="btn secondary" hidden>Cancel request</button>
+          <button id="delete" type="button" class="btn secondary danger" hidden>Delete files</button>
+        </div>
       </section>
 
-      <section id="analysis" class="analysis" hidden>
-        <div class="form-heading"><span>03</span><h2>Wave analysis</h2></div>
+      <section id="analysis" class="card analysis" hidden>
+        <div class="card-head">
+          <span class="step">03</span>
+          <h2>Wave analysis</h2>
+          <div id="head-actions" class="head-actions">
+            <a id="csv-link" class="btn ghost" href="#" download>↓ Time series CSV</a>
+            <a id="prov-link" class="btn ghost" href="#" target="_blank" rel="noopener">provenance.json</a>
+          </div>
+        </div>
         <div id="analysis-meta" class="analysis-meta"></div>
+        <div id="analysis-warnings" class="warnings" role="note" hidden></div>
         <div id="metrics" class="metrics"></div>
-        <div id="charts" class="charts"></div>
+
+        <div id="analysis-tabs" class="tabs" role="tablist" aria-label="Analysis views"></div>
+        <div class="panels">
+          <div class="panel" id="panel-overview" role="tabpanel" data-panel="overview" hidden><div id="sections-overview" class="sections"></div></div>
+          <div class="panel" id="panel-distributions" role="tabpanel" data-panel="distributions" hidden><div id="sections-distributions" class="sections"></div></div>
+          <div class="panel" id="panel-direction" role="tabpanel" data-panel="direction" hidden>
+            <form id="sector-form" class="sector-form" hidden>
+              <div>
+                <strong>Fixed-heading sector</strong>
+                <small>Share of the flux, taken from the spectrum, arriving within a heading ± half-width (coming from).</small>
+              </div>
+              <label class="field">Heading °<input id="sector-heading" type="number" min="0" max="360" step="any" placeholder="e.g. 200"></label>
+              <label class="field">± °<input id="sector-half" type="number" min="1" max="90" step="any" value="22.5"></label>
+              <button id="sector-apply" type="submit" class="btn secondary">Apply</button>
+            </form>
+            <div id="sections-direction" class="sections"></div>
+          </div>
+          <div class="panel" id="panel-quality" role="tabpanel" data-panel="quality" hidden><div id="sections-quality" class="sections"></div></div>
+          <div class="panel" id="panel-series" role="tabpanel" data-panel="series" hidden>
+            <div id="charts" class="charts"></div>
+            <details id="advanced" class="advanced" hidden>
+              <summary>Advanced: QC and diagnostic series</summary>
+              <div id="charts-advanced" class="charts"></div>
+            </details>
+          </div>
+          <div class="panel" id="panel-nodes" role="tabpanel" data-panel="nodes" hidden>
+            <div id="nodes-panel" class="nodes-panel" hidden>
+              <div class="nodes-head">
+                <label class="field">Colour by <select id="node-metric"></select></label>
+                <button id="node-reset" type="button" class="btn secondary" hidden>Back to nearest ocean cell</button>
+              </div>
+              <p id="nodes-note" class="section-note"></p>
+              <div class="scroll node-scroll"><table id="nodes-table" class="grid-table nodes"></table></div>
+            </div>
+          </div>
+          <div class="panel" id="panel-notes" role="tabpanel" data-panel="notes" hidden>
+            <ul id="analysis-notes" class="notes"></ul>
+          </div>
+        </div>
       </section>
+
+      <section id="recent" class="card recent" hidden>
+        <div class="card-head"><span class="step">04</span><h2>History</h2></div>
+        <div id="recent-list" class="recent-list"></div>
+      </section>
+
+      <section id="crosscheck" class="card crosscheck">
+        <div class="card-head"><span class="step">05</span><h2>Cross-check: Option A vs Option B</h2></div>
+        <p class="hint">Compare a finished single-levels job with a finished wave-spectra job for the same site and
+        period. The routes are never merged: this only shows where they agree.</p>
+        <div class="row-2">
+          <label class="field">Option A job (single levels)<select id="cc-a"></select></label>
+          <label class="field">Option B job (wave spectra)<select id="cc-b"></select></label>
+        </div>
+        <label class="check"><input id="cc-node" type="checkbox"><span>Compare at the grid node selected in the analysis (it must be an ocean node of both downloads)</span></label>
+        <button id="cc-run" type="button" class="btn secondary">Run cross-check</button>
+        <p id="cc-error" class="form-error" role="alert" hidden></p>
+        <div id="cc-result"></div>
+      </section>
+
+      <footer class="foot">
+        Contains modified Copernicus Climate Change Service information. ERA5 is a model reanalysis, not a measurement.
+        Basemap © OpenStreetMap contributors via OpenFreeMap.
+      </footer>
     </main>
-    <script src="https://unpkg.com/maplibre-gl@5.7.3/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@5.7.3/dist/maplibre-gl.js"
+            integrity="sha384-58glfsJ+cxARGnts6etFXqTluJx24YUgVY1WQxNLIfLkwT7yJfBORU1dKLD/YFTG" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"
+            integrity="sha384-XMP23k7YSCFr13Xrkxh4IO0v1W+8fB6AP+3Vycxphp2Z0V2vocAZHyuGaFCysrtM" crossorigin="anonymous"></script>
+    <script id="product-config" type="application/json">{{ {'defaultSteps': default_steps, 'maxBuffer': max_buffer, 'maxYears': max_years}|tojson }}</script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
+    {%- for name in plugin_scripts %}
+    <script src="{{ url_for('static', filename='plugins/' + name + '.js') }}"></script>
+    {%- endfor %}
   </body>
 </html>
