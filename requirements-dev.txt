@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest>=8
+wavespectra>=4.9  # optional: partitioning and the wavespectra cross-check tests
