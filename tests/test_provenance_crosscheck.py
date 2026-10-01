@@ -393,14 +393,6 @@ def run_fetcher(tmp_path, monkeypatch, client_class, extra=()):
                          "--output", str(tmp_path), "--product", "wave-spectra", "--expver", "1", *extra])
 
 
-def test_the_estimate_is_used_to_size_requests_before_submitting(tmp_path, monkeypatch, capsys):
-    EstimatingCds.limit = 4                      # refuse above 4 days; the estimate says 8 days = 200% of limit
-    code = run_fetcher(tmp_path, monkeypatch, EstimatingCds)
-    out = capsys.readouterr().out
-    assert code == 0 and "200%" in out and "runs of at most 4" in out
-    assert EstimatingCds.calls == [4, 4]         # the oversized 8-day request was never sent
-
-
 def test_estimate_mode_submits_nothing(tmp_path, monkeypatch, capsys):
     code = run_fetcher(tmp_path, monkeypatch, EstimatingCds, extra=("--estimate",))
     out = capsys.readouterr().out
@@ -408,12 +400,28 @@ def test_estimate_mode_submits_nothing(tmp_path, monkeypatch, capsys):
     assert not list(tmp_path.glob("*.nc"))
 
 
-def test_when_one_day_exceeds_the_limit_nothing_is_sent(tmp_path, monkeypatch, capsys):
-    class TooBig(EstimatingCds):
-        cost_per_day = 25.0
-    code = run_fetcher(tmp_path, monkeypatch, TooBig)
-    out = capsys.readouterr().out
-    assert code == 1 and "even one day is estimated" in out and TooBig.calls == []
+def test_normal_runs_never_call_the_cost_estimate(tmp_path, monkeypatch):
+    """The costing endpoint can answer 500, and the client retries 500s for hours: it must not block a download."""
+    class Hangs(FakeCds):
+        def __init__(self, **kwargs):
+            self.client = self
+
+        def estimate_costs(self, dataset, request):
+            raise AssertionError("estimate_costs must not be called during a download")
+
+    Hangs.calls, Hangs.limit = [], 10**6
+    assert run_fetcher(tmp_path, monkeypatch, Hangs) == 0 and Hangs.calls
+
+
+def test_estimate_mode_uses_a_client_that_does_not_retry(tmp_path, monkeypatch, capsys):
+    made = []
+
+    class Quick(EstimatingCds):
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+
+    code = run_fetcher(tmp_path, monkeypatch, Quick, extra=("--estimate",))
+    assert code == 0 and made[-1].get("retry_max") == 1 and made[-1].get("sleep_max") == 1
 
 
 def test_a_refused_single_day_stops_the_run_instead_of_hammering_cds(tmp_path, monkeypatch, capsys):

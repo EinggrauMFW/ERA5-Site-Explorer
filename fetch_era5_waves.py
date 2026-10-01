@@ -541,8 +541,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="submit a few one-day test requests, report which CDS accepts, and cancel "
                              "the accepted ones immediately (nothing is downloaded)")
     parser.add_argument("--estimate", action="store_true",
-                        help="ask CDS for the cost of the first request of each product and exit; "
-                             "nothing is submitted or downloaded")
+                        help="ask CDS for the cost of the first request and exit (nothing is submitted); "
+                             "CDS often answers HTTP 500 for MARS datasets, in which case use --probe")
     return parser.parse_args(argv)
 
 
@@ -668,7 +668,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Checked {len(wanted)} variable names against the live CDS catalogue: all accepted.",
                   flush=True)
     write_provenance(args.output / "provenance.json", provenance)
-    client = cdsapi.Client(progress=False)
+    # retry_max bounds how long a persistent CDS 5xx can stall a job (the library default is 500 tries).
+    client = cdsapi.Client(progress=False, retry_max=30)
 
     if args.probe:
         year, month, days_ = chunks[0]
@@ -683,32 +684,21 @@ def main(argv: list[str] | None = None) -> int:
     all_hours = hours_for(options["time_step"])
     # What CDS has accepted so far, learned from refusals and kept for the rest of the run.
     state = {"hours": len(all_hours), "cap_days": 31}
-    first_days = plan[(chunks[0][0], chunks[0][1])][0]
-    probe_dataset, probe_request = request_for(chunks[0][0], chunks[0][1], first_days)
-    reply = estimate_cost(client, probe_dataset, probe_request)
-    print(f"CDS cost estimate for {len(first_days)} day(s) of {args.product}: "
-          f"{json.dumps(reply, default=str)[:600]}", flush=True)
-    triples = cost_limits(reply)
-    provenance["cost_estimate"] = {"days": len(first_days), "reply": reply}
+
     if args.estimate:
+        # Only on request: CDS answered HTTP 500 for this endpoint on MARS datasets, and the normal client
+        # retries a 500 up to 500 times at 120 s, which would hang a download. Use a client that gives up.
+        first_days = plan[(chunks[0][0], chunks[0][1])][0]
+        probe_dataset, probe_request = request_for(chunks[0][0], chunks[0][1], first_days)
+        reply = estimate_cost(cdsapi.Client(progress=False, retry_max=1, sleep_max=1), probe_dataset, probe_request)
+        print(f"CDS cost estimate for {len(first_days)} day(s) of {args.product}: "
+              f"{json.dumps(reply, default=str)[:600]}", flush=True)
+        triples = cost_limits(reply)
         for name, cost, limit in triples:
             print(f"  {name}: cost {cost:g} of limit {limit:g} ({cost / limit:.0%})", flush=True)
         if not triples:
-            print("  (no cost/limit pair found in the reply above)", flush=True)
+            print("  (no cost/limit pair found; use --probe to see what CDS accepts)", flush=True)
         return 0
-    worst = max((cost / limit for _, cost, limit in triples if limit > 0), default=0.0)
-    if worst > 1.0:
-        per_day = worst / len(first_days)
-        fit = int(1.0 / per_day)
-        if fit < 1:
-            print(f"error: even one day is estimated at {per_day:.0%} of a CDS cost limit, so no split of "
-                  "the period can work. Reduce the request itself: a larger time step (3 or 6 h), fewer "
-                  "variables or parameters, or a different expver.", flush=True)
-            write_provenance(args.output / "provenance.json", provenance)
-            return 1
-        print(f"CDS estimates the first request at {worst:.0%} of its limit; using runs of at most {fit} "
-              "day(s).", flush=True)
-        state["cap_days"] = fit
 
     def retrieve(dataset: str, request: dict, target: Path, label: str) -> dict:
         record = {"dataset": dataset, "request": request, "file": target.name}

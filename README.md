@@ -59,10 +59,12 @@ The fetcher therefore adapts as it goes and remembers what CDS accepts for the r
 3. it stops at the first request of one day and one small time list that CDS still refuses, and says what
    to change (a larger `--time-step`, the ERA5 version `--expver 1` or `5`; the app has an **ERA5
    version** selector for the MARS products);
-4. `--estimate` asks CDS for a cost estimate and sizes requests from it if the reply has a cost and a
-   limit (the costing endpoint answered HTTP 500 without credentials, and `cdsapi`'s wrapped client is
-   needed to reach it); `--probe` submits five one-day test requests, reports which are accepted or
-   refused, and cancels each accepted one at once, so nothing is downloaded.
+4. `--probe` submits five one-day test requests, reports which are accepted or refused, and cancels each
+   accepted one at once, so nothing is downloaded. `--estimate` asks CDS for a cost estimate and exits, but
+   CDS answers HTTP 500 for this endpoint on MARS datasets (without credentials; with them it may too), so
+   it is not used during downloads. An earlier version called it before every download and the library
+   retried the 500 for hours; it now runs only on request, with a client that gives up. Downloads give up on
+   a persistent CDS server error after 30 retries.
 
 Hourly spectra are slow because of this (about six requests per day). Unless you need hourly spectra, use
 a 3-hour or 6-hour step.
