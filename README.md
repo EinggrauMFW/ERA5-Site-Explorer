@@ -9,7 +9,7 @@ Two data routes are kept strictly separate. **Option A** uses ERA5 single-level 
 A cross-check panel compares them but never merges them. The basemap is OpenFreeMap (OpenStreetMap data)
 and needs no account or token.
 
-> **Status.** The numerics are tested on synthetic data with known answers (193 tests, `python -m pytest -q`).
+> **Status.** The numerics are tested on synthetic data with known answers (217 tests, `python -m pytest -q`, run on every push by GitHub Actions).
 > Option A has completed real CDS downloads (2025 single levels, under one year; the screenshots below come
 > from one). Option B has no completed job: five were refused by CDS as too large, one was cancelled, and
 > one 6-hourly July 2026 job downloaded its 16 files but was marked failed by an app restart. Option A and
@@ -126,6 +126,13 @@ known, so the fetcher adapts and remembers what CDS accepts for the rest of the 
    change (a larger time step, or the other `expver`).
 4. Downloads give up on a persistent CDS server error after 30 retries.
 
+While a download runs, the status card shows a progress bar (`7 of 16 requests`, how many were already on
+disk, and an estimate of the time left from the median of the requests downloaded so far; CDS queue times
+vary a lot, so treat it as a rough guide). **Resume download** continues a failed or cancelled job in place:
+files already on disk are skipped. The rerun repeats the same refusals to reach the same plan, so file names
+match and nothing is downloaded twice. **Check what CDS accepts** (shown for spectra and MARS) runs `--probe`
+for the chosen site and period and lists what CDS said about each one-day request; nothing is downloaded.
+
 Hourly spectra are slow (about six requests per day). Unless you need them, use a 3 h or 6 h step.
 
 `--probe` submits five one-day test requests, reports which are accepted or refused, and cancels each
@@ -202,8 +209,9 @@ A box downloads every ERA5 grid node inside it (6°N–0°N and 95°E–100°E a
 ice nodes (no data) in grey, and a table lists them with depth, mean values and distance from the site.
 Click a node or a row to rerun the whole analysis for that node, or **Back to nearest ocean cell** to
 return to the default. No new download is needed: the data for every node is already in the files. Means
-are over the record with flux computed per record first; for spectra the summary uses at most 300 records
-spread over the period and says so. Each node's analysis and time series are cached separately, and the
+are over the record with flux computed per record first. For spectra every record is read, in chunks to
+bound memory, as long as nodes × records stays within 500,000; above that the summary uses one record in
+every N and says so. Each node's analysis and time series are cached separately, and the
 sector flux, the CSV download and the tools below follow the selected node. If the OpenFreeMap basemap
 cannot be reached, the map falls back to a plain background so the nodes still draw.
 
@@ -215,8 +223,8 @@ the selected grid node, and run on both routes unless noted.
 - **Screening.** Every ocean node at once: colour the map by mean flux, Hm0, Te, 95th-percentile flux,
   flux variability, the max/min calendar-season ratio, or the mean flux of one season or month; a ranking
   table; a month-by-node heat table; and a side-by-side comparison of up to three nodes with the 12-month
-  flux climatology. Seasons are calendar seasons by month (DJF = Dec–Feb, ...). Spectra statistics use at
-  most 1,500 records per node.
+  flux climatology. Seasons are calendar seasons by month (DJF = Dec–Feb, ...). Spectra statistics follow
+  the same rule as the node table: all records within the budget, a stated stride above it.
 - **Device.** Upload a power matrix CSV (rows Hm0 in m, columns period in s, power in kW; centres or lower
   edges; undefined cells blank) and get annual energy production (`mean power × 8766 h`), capacity
   factor, the share of records and of flux outside the matrix, two capture-width estimators
@@ -279,8 +287,8 @@ stop at 0.548 Hz and no tail is added.
 
 ## Jobs, files and security
 
-Jobs are reloaded on start (a job interrupted by a restart shows as failed). **Cancel request** stops a
-queued or running download and **Delete files** removes a job and its data.
+Jobs are reloaded on start (a job interrupted by a restart shows as failed and can be resumed).
+**Cancel request** stops a queued or running download and **Delete files** removes a job and its data.
 
 The server binds to `127.0.0.1` and has no authentication. Do not expose it beyond your machine: anyone who
 can reach it can start CDS downloads as you.
@@ -307,7 +315,10 @@ python -m pytest -q
 ```
 
 The suite runs offline. Numerical tests compare against hand-derived values and, for extremes, a synthetic
-process with a known GPD tail.
+process with a known GPD tail. GitHub Actions runs it on Ubuntu and Windows with Python 3.12 and 3.13. The
+lower bounds in `requirements.txt` are the oldest versions that pass the suite on Python 3.13 (numpy 2.1,
+pandas 2.2.3, scipy 1.14.1, xarray 2025.1, netCDF4 1.7.2, Flask 3.0, cdsapi 0.7.7); newer ones are tested
+too. The workflow file has not been run on GitHub yet.
 
 ## License
 
