@@ -1,18 +1,23 @@
 """Tests for site screening: per-node statistics, payload shape, caching and the HTTP routes."""
 import pytest
 import numpy as np
+import pandas as pd
 import analysis
+from tests.test_nodes import client
 import wavecalc as wc
-from screening import compute_screening
+import screening
+from screening import compute_screening, _node_stats
 from tests.test_analysis import wave_dataset, spectra_dataset, bathymetry_file
 from tests.test_provenance_crosscheck import make_job
 import app as appmodule
+
 
 def build_a(folder):
     ds = wave_dataset(hours=96)
     scale = np.arange(9, dtype=float).reshape(3, 3) * 0.1 + 1.0
     ds["swh"] = ds["swh"] * scale[None, :, :]
     ds.to_netcdf(folder / "era5_2022-01.nc")
+
 
 def test_zero_hm0_flux_cov_none(tmp_path):
     path = tmp_path / "era5_2022-01.nc"
@@ -24,6 +29,7 @@ def test_zero_hm0_flux_cov_none(tmp_path):
     result = compute_screening([path], "single-levels", 0.0, 95.0)
     ocean = [n for n in result["nodes"] if n["valid"]][0]
     assert ocean["flux_cov"] is None
+
 
 def test_option_a_synthetic(tmp_path):
     path = tmp_path / "era5_2022-01.nc"
@@ -55,6 +61,7 @@ def test_option_a_synthetic(tmp_path):
     assert "T" in result["record"]["start"]
     assert "T" in result["record"]["end"]
 
+
 def test_no_mwp(tmp_path):
     path = tmp_path / "era5_2022-01.nc"
     ds = wave_dataset(hours=96).drop_vars(["mwp"])
@@ -65,10 +72,10 @@ def test_no_mwp(tmp_path):
     ocean = [n for n in nodes if n["valid"]][0]
     assert ocean["flux_mean_kw_m"] is None
 
+
 def test_monthly_and_seasonal_means(tmp_path):
     path = tmp_path / "era5_multi.nc"
     ds = wave_dataset(hours=4*30*24)
-    import pandas as pd
     time_dim = analysis.time_name_of(ds)
     times = pd.date_range("2021-12-01", periods=ds.sizes[time_dim], freq="h")
     ds[time_dim] = times
@@ -111,6 +118,7 @@ def test_monthly_and_seasonal_means(tmp_path):
     assert "Calendar seasons by month: DJF = December, January, February; MAM = March-May; JJA = June-August; SON = September-November." in result["season_definition"]
     assert any("Seasonal statistics from a partial year are biased: the record does not cover all 12 months." in w for w in result["warnings"])
 
+
 def test_mean_flux_is_not_flux_of_means(tmp_path):
     path = tmp_path / "era5_2022-01.nc"
     ds = wave_dataset(hours=2)
@@ -130,9 +138,8 @@ def test_mean_flux_is_not_flux_of_means(tmp_path):
     assert ocean["hm0_mean_m"] == pytest.approx(2.0)
     assert ocean["te_mean_s"] == pytest.approx(1.0)
 
+
 def test_flux_cov_and_p95():
-    from screening import _node_stats
-    import numpy as np
     hm0 = np.array([1, 1, 1, 1])
     te = np.array([1, 1, 1, 1])
     flux = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
@@ -142,9 +149,9 @@ def test_flux_cov_and_p95():
     assert res["flux_p95_kw_m"] == pytest.approx(np.percentile(flux, 95))
     assert res["flux_cov"] == pytest.approx(np.std(flux) / np.mean(flux))
 
+
 def test_option_b_spectra(tmp_path, monkeypatch):
-    import screening
-    monkeypatch.setattr(screening, "MAX_RECORDS", 10)
+    monkeypatch.setattr(analysis, "MAX_NODE_RECORDS", 100)
     
     path = tmp_path / "era5_spectra.nc"
     spectra_dataset(hours=24, land=True).to_netcdf(path)
@@ -152,7 +159,7 @@ def test_option_b_spectra(tmp_path, monkeypatch):
     
     result = compute_screening([path, tmp_path / "era5_bathymetry.nc"], "wave-spectra", 0.0, 95.0)
     assert result["n_land"] == 1
-    assert "every 3th record" in result["sampling_note"]
+    assert "one record in every 3" in result["sampling_note"]
     
     ocean = [n for n in result["nodes"] if n["valid"]][0]
     assert ocean["depth_m"] == 40.0
@@ -163,10 +170,12 @@ def test_option_b_spectra(tmp_path, monkeypatch):
     assert "T" in result["record"]["start"]
     assert "T" in result["record"]["end"]
 
-from tests.test_nodes import client
 @pytest.fixture
+
+
 def test_client(client):
     return client
+
 
 def test_http_routes(test_client, monkeypatch):
     def builder(folder):
@@ -185,7 +194,6 @@ def test_http_routes(test_client, monkeypatch):
     assert (folder / "screening.json").exists()
     
     call_count = [0]
-    import screening
     orig_compute = screening.compute_screening
     def mock_compute(*args, **kwargs):
         call_count[0] += 1

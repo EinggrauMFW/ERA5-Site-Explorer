@@ -346,8 +346,10 @@ def _variability_indices(climatology: dict, clim_raw: dict,
                      "reason": "annual mean flux unavailable"}
 
     unverified.append(
-        "The index names COV, MVI, SVI and their formulas are as defined in this tool; "
-        "they were not verified against a published peer-reviewed definition."
+        "MVI and SVI follow the definition described by Kamranzad et al. (2016, Energy): the range of the "
+        "monthly or seasonal mean flux divided by the annual mean flux (they cite Cornett 2008 and Zheng et al. "
+        "2013; those papers were not read). Here the annual mean is the mean of the 12 monthly means. The "
+        "definition of COV used here (std / mean of per-record flux) was not checked against a source."
     )
 
     return {

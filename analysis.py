@@ -16,6 +16,7 @@ import tempfile
 import warnings as _warnings
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -23,7 +24,15 @@ import xarray as xr
 
 import wavecalc as wc
 
-ANALYSIS_VERSION = 6
+ANALYSIS_VERSION = 7
+
+class SpectraNodes(NamedTuple):
+    node_data: dict
+    months: np.ndarray
+    note: str | None
+    lats: np.ndarray | None
+    lons: np.ndarray | None
+
 
 HOURS_PER_YEAR = 8766.0           # 365.25 days
 MIN_RECORD_YEARS = 10             # project target of the author, not a standard
@@ -993,9 +1002,6 @@ def analyse(files: list[Path], latitude: float, longitude: float, product: str =
 
 # --- grid nodes ------------------------------------------------------------------
 
-NODE_SAMPLE_STEPS = 300   # spectra records used per node for the quick summary
-
-
 def read_depth_grid(bathymetry_files: list[Path]):
     """Model depth as a 2-D DataArray (latitude, longitude) in metres, or None."""
     if not bathymetry_files:
@@ -1026,6 +1032,89 @@ def _nan_mean(total: np.ndarray, count: np.ndarray) -> np.ndarray:
         return np.where(count > 0, total / count, np.nan)
 
 
+def sampling_note(stride: int, total_records: int) -> str | None:
+    if stride <= 1:
+        return None
+    sampled = -(-total_records // stride)
+    return f"Spectra summary uses one record in every {stride} ({sampled:,} of {total_records:,} records)."
+
+
+MAX_NODE_RECORDS = 500000  # Budget for exact node summary (takes ~9.5 s wall time).
+CHUNK_SIZE = 500  # Bounds memory during exact computation (peak ~244 MB).
+
+def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> SpectraNodes:
+    """Return SpectraNodes (node_data, months, note, lats, lons).
+
+    node_data is keyed by (i, j) with a dict of 'hm0', 'te', 'flux' arrays.
+    """
+    freqs, dfreq, dtheta, dir_to, _ = wc.spectra_axes()
+
+    # First find lats and lons
+    lats = lons = None
+    for path in paths:
+        with xr.open_dataset(path, engine="netcdf4") as ds:
+            if spectra_variable(ds):
+                lats = ds["latitude"].values
+                lons = ds["longitude"].values
+                break
+
+    if lats is None:
+        return SpectraNodes({}, np.array([]), None, None, None)
+
+    n_nodes = len(lats) * len(lons)
+    stride = max(1, -(-(total_records * n_nodes) // MAX_NODE_RECORDS))
+    note = sampling_note(stride, total_records)
+
+    node_lists = {(i, j): {"hm0": [], "te": [], "flux": []} for i in range(len(lats)) for j in range(len(lons))}
+    all_months = []
+
+    for path in paths:
+        with xr.open_dataset(path, engine="netcdf4") as ds:
+            found = spectra_variable(ds)
+            if found is None:
+                continue
+            variable, dir_dim, freq_dim = found
+            time_name = time_name_of(ds)
+
+            raw_full = ds[variable].isel({time_name: slice(None, None, stride)})
+            if "expver" in raw_full.dims:
+                raw_full = raw_full.mean("expver", skipna=True)
+
+            n_strided = raw_full.sizes[time_name]
+            times = pd.DatetimeIndex(ds[time_name].values[::stride])
+            all_months.append(times.month.to_numpy())
+
+            for start in range(0, n_strided, CHUNK_SIZE):
+                end = min(start + CHUNK_SIZE, n_strided)
+                chunk = raw_full.isel({time_name: slice(start, end)})
+                chunk = chunk.transpose(time_name, dir_dim, freq_dim, "latitude", "longitude").values.astype(float)
+
+                for i, lat in enumerate(lats):
+                    for j, lon in enumerate(lons):
+                        column = chunk[:, :, :, i, j]
+                        if not np.isfinite(column).any():
+                            nans = np.full(end - start, np.nan)
+                            for name in ("hm0", "te", "flux"):
+                                node_lists[(i, j)][name].append(nans)
+                            continue
+
+                        depth = _depth_lookup(depth_grid, lat, lon)
+                        bulk = wc.spectral_bulk(wc.decode_log10(column), freqs, dfreq, dtheta, dir_to, depth)
+                        for name in ("hm0", "te", "flux"):
+                            node_lists[(i, j)][name].append(bulk[name])
+
+    months = np.concatenate(all_months) if all_months else np.array([])
+    node_data = {
+        key: {
+            name: np.concatenate(lists[name]) if lists[name] else np.array([])
+            for name in ("hm0", "te", "flux")
+        }
+        for key, lists in node_lists.items()
+    }
+
+    return SpectraNodes(node_data, months, note, lats, lons)
+
+
 def node_summary(files: list[Path], product: str, latitude: float, longitude: float) -> dict:
     """Every grid node in the download with a quick summary, to pick one for analysis.
 
@@ -1051,42 +1140,31 @@ def node_summary(files: list[Path], product: str, latitude: float, longitude: fl
     with tempfile.TemporaryDirectory(prefix="era5-nodes-") as temp_name:
         paths = netcdf_paths(data_files, Path(temp_name))
         if product == "wave-spectra":
-            freqs, dfreq, dtheta, dir_to, _ = wc.spectra_axes()
             lengths = []
             for path in paths:
                 with xr.open_dataset(path, engine="netcdf4") as ds:
                     found = spectra_variable(ds)
                     lengths.append(ds.sizes[time_name_of(ds)] if found else 0)
-            stride = max(1, -(-sum(lengths) // NODE_SAMPLE_STEPS))
-            if stride > 1:
-                note = (f"Spectra summary uses every {stride}th record "
-                        f"({-(-sum(lengths) // stride):,} of {sum(lengths):,}).")
-            for path in paths:
-                with xr.open_dataset(path, engine="netcdf4") as ds:
-                    found = spectra_variable(ds)
-                    if found is None:
-                        continue
-                    variable, dir_dim, freq_dim = found
-                    time_name = time_name_of(ds)
-                    lats, lons = ds["latitude"].values, ds["longitude"].values
-                    raw = ds[variable].isel({time_name: slice(None, None, stride)})
-                    if "expver" in raw.dims:
-                        raw = raw.mean("expver", skipna=True)
-                    raw = raw.transpose(time_name, dir_dim, freq_dim, "latitude", "longitude").values.astype(float)
+            total_records = sum(lengths)
+
+            if total_records > 0:
+                res = compute_spectra_nodes(paths, depth_grid, total_records)
+                note = res.note
+                lats = res.lats
+                lons = res.lons
+
+                if lats is not None:
                     shape = (len(lats), len(lons))
                     for name in ("hm0", "te", "flux"):
                         sums.setdefault(name, np.zeros(shape))
                         counts.setdefault(name, np.zeros(shape))
+
                     for i in range(len(lats)):
                         for j in range(len(lons)):
-                            column = raw[:, :, :, i, j]
-                            if not np.isfinite(column).any():
-                                continue
-                            depth = _depth_lookup(depth_grid, lats[i], lons[j])
-                            bulk = wc.spectral_bulk(wc.decode_log10(column), freqs, dfreq, dtheta, dir_to, depth)
                             for name in ("hm0", "te", "flux"):
-                                good = np.isfinite(bulk[name])
-                                sums[name][i, j] += bulk[name][good].sum()
+                                values = res.node_data[(i, j)][name]
+                                good = np.isfinite(values)
+                                sums[name][i, j] += values[good].sum() if good.any() else 0.0
                                 counts[name][i, j] += good.sum()
         else:
             generic_done = False
