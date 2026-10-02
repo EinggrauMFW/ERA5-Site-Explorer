@@ -521,6 +521,15 @@ def write_provenance(path: Path, record: dict) -> None:
     temporary.replace(path)
 
 
+def setup_logging() -> None:
+    # The CDS client adds its own timestamped handler when its logger has none, and the message then also
+    # reaches the root logger, so every line printed twice. Giving the library loggers a handler makes each
+    # message print once, from the root logger, with a timestamp.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
+    for name in ("ecmwf.datastores.legacy_client", "cdsapi"):
+        logging.getLogger(name).addHandler(logging.NullHandler())
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--latitude", type=float, required=True)
@@ -650,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
         print("error: install cdsapi (pip install cdsapi) and configure ~/.cdsapirc", flush=True)
         return 2
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
+    setup_logging()
     args.output.mkdir(parents=True, exist_ok=True)
 
     datasets_used = sorted({request_for(y, m, d)[0] for y, m, d in chunks} |
@@ -766,6 +775,16 @@ def main(argv: list[str] | None = None) -> int:
         record["hours"] = [hours[0], hours[-1]]
         return record
 
+    done_requests = skipped_requests = 0
+
+    def print_progress(queue: list, later_months: list) -> None:
+        """One line the app reads for its progress bar; the total follows the shape CDS currently accepts."""
+        remaining = sum(len(fit_unit(d, h)) for d, h in queue)
+        remaining += sum(len(fit_unit(later_days, all_hours)) for _, _, later_days in later_months)
+        print("::progress:: " + json.dumps({"done": done_requests, "total": done_requests + remaining,
+                                            "skipped": skipped_requests}), flush=True)
+
+    print_progress([], chunks)
     failure = False
     for index, (year, month, days) in enumerate(chunks, start=1):
         label = f"[{index}/{len(chunks)}] {year:04d}-{month:02d}"
@@ -794,6 +813,10 @@ def main(argv: list[str] | None = None) -> int:
             write_provenance(args.output / "provenance.json", provenance)
             if str(record["status"]).startswith("failed"):
                 failure = True
+            else:
+                done_requests += 1
+                skipped_requests += str(record["status"]).startswith("skipped")
+                print_progress(queue, chunks[index:])
         if failure:
             break
 

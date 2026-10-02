@@ -119,7 +119,10 @@
 
           <label class="check"><input id="dry-run" type="checkbox"><span>Preview request only (no CDS download)</span></label>
           <p id="form-error" class="form-error" role="alert" hidden></p>
-          <button id="submit" type="submit" class="btn primary">Fetch ERA5 data <span aria-hidden="true">↗</span></button>
+          <div class="submit-row">
+            <button id="submit" type="submit" class="btn primary">Fetch ERA5 data <span aria-hidden="true">↗</span></button>
+            <button id="probe" type="submit" class="btn secondary" hidden>Check what CDS accepts</button>
+          </div>
           <p class="hint">Downloads need a configured <code>~/.cdsapirc</code> and an accepted ERA5 licence. ERA5 is available up to {{ latest_date }}. <span id="limits"></span></p>
         </form>
       </section>
@@ -132,9 +135,15 @@
           <span id="job-id" class="job-id"></span>
         </div>
         <div class="progress" id="progress" hidden><span></span></div>
+        <div id="progress-details" hidden>
+          <div class="progress-bar"><span id="progress-bar"></span></div>
+          <p id="progress-text" class="hint"></p>
+        </div>
         <pre id="log"></pre>
         <div id="files" class="files"></div>
+        <p id="resume-error" class="form-error" role="alert" hidden></p>
         <div class="job-actions">
+          <button id="resume" type="button" class="btn primary" hidden>Resume download</button>
           <button id="cancel" type="button" class="btn secondary" hidden>Cancel request</button>
           <button id="delete" type="button" class="btn secondary danger" hidden>Delete files</button>
         </div>

@@ -213,11 +213,16 @@ fieldset.options legend { padding: 0; margin-bottom: 8px; font-size: 11px; font-
 .job-id { margin-left: auto; font: 12px ui-monospace, Consolas, monospace; color: var(--faint); text-transform: uppercase; }
 .progress { height: 3px; margin: -8px 0 14px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .progress span { display: block; width: 35%; height: 100%; background: var(--sea); animation: slide 1.3s ease-in-out infinite; }
+.progress-bar { height: 6px; margin: -8px 0 8px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.progress-bar span { display: block; width: 0; height: 100%; background: var(--sea); transition: width .4s ease; }
+#progress-text { margin: 0 0 14px; }
+.submit-row { display: flex; flex-wrap: wrap; gap: 10px; }
 pre { min-height: 90px; max-height: 260px; overflow: auto; margin: 0 0 14px; padding: 14px 16px; border-radius: var(--radius-sm); background: #0e1d19; color: #d8e7df; font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
 .files { display: grid; }
 .files a { display: block; padding: 10px 0; color: var(--ink); border-bottom: 1px solid var(--line); text-decoration: none; font-size: 13px; }
 .files a:hover { color: var(--focus); }
 .job-actions { display: flex; gap: 10px; margin-top: 14px; }
+.job-actions .btn.primary { width: auto; justify-content: center; padding: 9px 16px; border-radius: 999px; font-size: 13px; }
 
 .recent-list { display: grid; gap: 8px; }
 .recent-item { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); text-decoration: none; color: var(--ink); background: var(--surface-2); }

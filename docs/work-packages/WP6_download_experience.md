@@ -46,13 +46,16 @@ may add its own handler) and make each message appear once, keeping the timestam
 setup into a small function you can test (for example that the library's logger ends up with exactly one
 effective output path). Report what the cause was.
 
-### 3. Remember what CDS accepts
+### 3. Remember what CDS accepts: tried and rejected
 
-The fetcher learns the largest request shape CDS accepts (`state["hours"]`, `state["cap_days"]`). Write it to
-`<output>/learned_shape.json` whenever it changes, and read it at the start of a run if it exists, so a
-resumed job does not repeat refusals. Validate on read: integers, `1 <= hours <= len(all_hours)` and
-`1 <= cap_days <= 31`; ignore the file if anything is wrong or missing. Test the round trip and the invalid
-cases.
+The first version of this spec asked the fetcher to save the learned request shape to `learned_shape.json`
+and reload it on resume, so a resumed job would not repeat the refusals. A test of that design showed it is
+wrong. The shape is learned during a run, so the files of one run have different shapes (for hourly spectra
+the first files hold 3 time steps, later ones 4), and skipping works by file name. A rerun that plans from
+the final shape asks for different files, downloads the month again and leaves overlapping records on disk.
+Replaying the same refusals reproduces the same plan and the same file names, so existing files are skipped;
+the cost is a few quick refusals at the start. The shape is therefore NOT persisted
+(`tests/test_progress.py::test_a_resumed_run_replays_the_same_plan_and_downloads_nothing_twice`).
 
 ### 4. Resume
 
