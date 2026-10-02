@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import warnings
 import zipfile
 
 import numpy as np
@@ -159,6 +160,17 @@ def test_hm0_shortfall_is_a_negative_bias_and_worst_records_are_listed():
     hm0 = row(result, "hm0")
     assert hm0["bias_pct"] == pytest.approx(-1.0, abs=0.01) and len(hm0["worst"]) == 10
     assert hm0["scatter"]["a"] and hm0["correlation"] == pytest.approx(1.0)
+
+
+def test_a_constant_series_has_no_correlation_and_valid_json():
+    a, b = frames()
+    a["swh"], b["hm0"] = 2.0, 2.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")              # np.corrcoef used to warn on a zero-variance series
+        result = crosscheck.compare(a, b)
+    assert row(result, "hm0")["correlation"] is None
+    assert row(result, "te")["correlation"] == pytest.approx(1.0)
+    json.dumps(result, allow_nan=False)             # NaN would make the API response invalid JSON
 
 
 def test_only_matching_timestamps_are_compared():
