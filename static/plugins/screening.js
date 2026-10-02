@@ -18,7 +18,7 @@
   const seasons = ['DJF', 'MAM', 'JJA', 'SON'];
   seasons.forEach(s => stats.push({ id: `season_${s}`, label: `Mean flux ${s} (kW/m)` }));
   
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = EraExplorer.MONTHS;
   months.forEach((m, i) => stats.push({ id: `month_${i}`, label: `Mean flux ${m} (kW/m)` }));
   
   function getStat(n, id) {
@@ -49,9 +49,10 @@
     const table = node('table', 'screening-table grid-table');
     const thead = node('thead', '');
     const headerRow = node('tr', '');
-    ['Lat', 'Lon', 'Depth (m)', 'Dist (km)', 'Hm0 (m)', 'Te (s)', 'Flux (kW/m)', 'P95 (kW/m)', 'COV', 'Seasonality', 'Actions'].forEach(text => {
-      headerRow.append(node('th', '', text));
+    ['Lat', 'Lon', 'Depth (m)', 'Dist (km)', 'Hm0 (m)', 'Te (s)', 'Flux (kW/m)', 'P95 (kW/m)', 'COV', 'Seasonality'].forEach(text => {
+      headerRow.append(node('th', 'num', text));
     });
+    headerRow.append(node('th', '', 'Actions'));
     thead.append(headerRow);
     table.append(thead);
 
@@ -63,12 +64,12 @@
 
     validNodes.forEach(n => {
       const row = node('tr', '');
-      let latText = n.lat.toString();
+      let latText = EraExplorer.fmtCoord(n.lat);
       if (screeningData.default_node && n.lat === screeningData.default_node.lat && n.lon === screeningData.default_node.lon) {
         latText += ' (nearest)';
       }
-      row.append(node('td', '', latText));
-      row.append(node('td', '', n.lon.toString()));
+      row.append(node('td', 'num', latText));
+      row.append(node('td', 'num', EraExplorer.fmtCoord(n.lon)));
       row.append(node('td', 'num', n.depth_m != null ? fmtNum(n.depth_m) : '—'));
       row.append(node('td', 'num', fmtNum(n.distance_km)));
       row.append(node('td', 'num', n.hm0_mean_m != null ? fmtNum(n.hm0_mean_m) : '—'));
@@ -108,7 +109,7 @@
     const thead = node('thead', '');
     const headerRow = node('tr', '');
     headerRow.append(node('th', '', 'Node'));
-    months.forEach(m => headerRow.append(node('th', '', m)));
+    months.forEach(m => headerRow.append(node('th', 'num', m)));
     thead.append(headerRow);
     table.append(thead);
 
@@ -124,7 +125,7 @@
 
     top10.forEach(n => {
       const row1 = node('tr', '');
-      row1.append(node('td', '', `${n.lat}, ${n.lon} (Months)`));
+      row1.append(node('td', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)} (Months)`));
       n.monthly_flux_kw_m.forEach(v => {
         const td = node('td', 'heat-cell');
         if (v != null) {
@@ -175,7 +176,7 @@
     const chips = node('div', 'compare-chips');
     comparedNodes.forEach((n, idx) => {
       const chip = node('div', 'compare-chip');
-      chip.append(node('span', '', `${n.lat}, ${n.lon}`));
+      chip.append(node('span', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`));
       const rm = node('button', '', '×');
       rm.addEventListener('click', () => {
         comparedNodes.splice(idx, 1);
@@ -191,7 +192,7 @@
       const thead = node('thead', '');
       const hRow = node('tr', '');
       hRow.append(node('th', '', 'Metric'));
-      comparedNodes.forEach(n => hRow.append(node('th', '', `${n.lat}, ${n.lon}`)));
+      comparedNodes.forEach(n => hRow.append(node('th', 'num', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`)));
       thead.append(hRow);
       table.append(thead);
 
@@ -246,7 +247,7 @@
       comparedNodes.forEach((n, idx) => {
         data.push(n.monthly_flux_kw_m.map(v => v != null ? v : null));
         series.push({
-          label: `${n.lat}, ${n.lon}`,
+          label: `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`,
           stroke: colors[idx % colors.length],
           width: 2
         });

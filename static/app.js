@@ -39,6 +39,13 @@ function fmtNum(value) {
   return n.toLocaleString(undefined, { maximumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2, minimumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2 });
 }
 
+function fmtCoord(val) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) return '—';
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 3, useGrouping: false }).format(val);
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 // --- theme: automatic (follows the system), light or dark ---------------------------------
 const THEMES = ['auto', 'light', 'dark'];
 const THEME_ICON = { auto: '◐', light: '☀', dark: '☾' };
@@ -486,10 +493,10 @@ function renderNodePanel() {
     tr.className = [n.valid ? '' : 'land', selected ? 'selected' : ''].join(' ').trim();
     columns.forEach(([key]) => {
       const value = n[key];
-      const text = key === 'lat' || key === 'lon' ? Number(value).toFixed(2)
+      const text = key === 'lat' || key === 'lon' ? fmtCoord(value)
         : value == null ? (n.valid ? '' : 'land / ice') : (key === 'depth' || key === 'distance_km' ? fmtNum(value) : fmtNum(value));
       const td = node('td', value == null && !n.valid ? '' : 'num', text);
-      if (key === 'lon' && isDefault) td.append(node('small', 'tag', 'nearest ocean'));
+      if (key === 'lat' && isDefault) td.append(node('small', 'tag', 'nearest ocean'));
       tr.append(td);
     });
     if (n.valid) {
@@ -1159,7 +1166,7 @@ window.EraExplorer = {
   /** Sizing and colours for uPlot charts; trackChart() makes the chart follow window and tab resizes. */
   chartTheme,
   trackChart(chart) { charts.push(chart); return chart; },
-  fmtNum, fmt, node, metric,
+  fmtNum, fmtCoord, fmt, node, metric, MONTHS,
   /** Colour, one value, for categorical series (comparison of several nodes). */
   palette() {
     const css = getComputedStyle(document.documentElement);

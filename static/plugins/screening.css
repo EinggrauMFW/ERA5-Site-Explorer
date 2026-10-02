@@ -5,12 +5,16 @@
 }
 .screening-controls {
     display: flex;
+    flex-wrap: wrap;
     gap: 15px;
     align-items: center;
 }
+.screening-controls span {
+    white-space: nowrap;
+}
 .screening-table-card {
     max-height: 400px;
-    overflow-y: auto;
+    overflow: auto;
     border: 1px solid var(--line);
 }
 .screening-table {
@@ -31,6 +35,9 @@
 }
 .screening-table tr:hover {
     background: var(--surface-2);
+}
+.screening-table td:last-child {
+    white-space: nowrap;
 }
 .heat-table {
     width: 100%;
@@ -79,3 +86,6 @@
 .compare-chart-container {
     height: 300px;
 }
+
+/* Wide tables scroll inside their own box instead of widening the page on a phone. */
+.heat-table { display: block; max-width: 100%; overflow-x: auto; }

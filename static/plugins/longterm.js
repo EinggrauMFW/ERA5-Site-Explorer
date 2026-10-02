@@ -167,7 +167,7 @@
       trackChart(new uPlot({
         width: Math.max(280, holder.clientWidth || 600), height: 240,
         series, scales: { x: { time: false } },
-        axes: [{ ...axis, label: 'Month', values: (_, ticks) => ticks.map(t => t >= 1 && t <= 12 ? String(Math.round(t)) : '') },
+        axes: [{ ...axis, label: 'Month', values: (_, ticks) => ticks.map(t => t >= 1 && t <= 12 ? EraExplorer.MONTHS[Math.round(t) - 1] : '') },
                { ...axis, label: 'kW/m', size: 56 }],
         legend: { live: true }
       }, plotData, holder));
