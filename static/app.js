@@ -9,7 +9,10 @@ const filesEl = $('#files');
 const analysisEl = $('#analysis');
 const formError = $('#form-error');
 const submitButton = $('#submit');
+const probeButton = $('#probe');
 const cancelButton = $('#cancel');
+const resumeButton = $('#resume');
+const resumeError = $('#resume-error');
 const deleteButton = $('#delete');
 let marker;
 let gridMarker;
@@ -18,6 +21,10 @@ let pollTimer = null;
 let charts = [];
 
 const ACTIVE = ['queued', 'running'];
+const PROBE_MARKER = 'Probing CDS with one-day test requests';
+
+// A preview (a dry run or a probe) downloads nothing, so it is never data to analyse.
+function isPreview(job) { return Boolean(job.dry_run || job.probe); }
 const PRODUCT_SHORT = { 'single-levels': 'A · single levels', 'mars-surface': 'MARS surface', 'wave-spectra': 'B · wave spectra' };
 const PRODUCT_SEGMENTS = {
   'single-levels': ['Option A', 'Single levels'],
@@ -31,6 +38,13 @@ function fmtNum(value) {
   const n = Number(value), a = Math.abs(n);
   return n.toLocaleString(undefined, { maximumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2, minimumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2 });
 }
+
+function fmtCoord(val) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) return '—';
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 3, useGrouping: false }).format(val);
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // --- theme: automatic (follows the system), light or dark ---------------------------------
 const THEMES = ['auto', 'light', 'dark'];
@@ -234,6 +248,7 @@ function applyProduct() {
   $('#product-note').textContent = PRODUCT_NOTES[product];
   $('#time-step').value = String(config.defaultSteps[product]);
   $('#expver-label').hidden = product === 'single-levels';
+  probeButton.hidden = product === 'single-levels';
   const buffer = $('#buffer');
   buffer.max = config.maxBuffer[product];
   if (Number(buffer.value) > config.maxBuffer[product]) buffer.value = config.maxBuffer[product];
@@ -258,18 +273,54 @@ function renderFiles(job) {
   }));
 }
 
+function setSubmitting(busy) {
+  submitButton.disabled = busy;
+  probeButton.disabled = busy;
+}
+
+function etaText(seconds) {
+  const minutes = Math.max(0, Math.round(seconds / 60));
+  if (minutes < 1) return 'less than a minute left';
+  const hours = Math.floor(minutes / 60);
+  return `about ${hours ? `${hours} h ${minutes % 60} min` : `${minutes} min`} left`;
+}
+
+function renderProgress(job, active) {
+  const known = active && job.progress;
+  // Jobs without a progress report (previews, old jobs) keep the indeterminate bar.
+  $('#progress').hidden = !active || Boolean(job.progress);
+  $('#progress-details').hidden = !known;
+  if (!known) return;
+  const { done, total, skipped, eta_seconds: eta } = job.progress;
+  $('#progress-bar').style.width = `${Math.min(100, Math.max(0, 100 * done / (total || 1)))}%`;
+  const parts = [`${done} of ${total} requests`];
+  if (skipped) parts.push(`${skipped} already on disk`);
+  if (eta != null) parts.push(`${etaText(eta)} (estimate: CDS queue times vary)`);
+  $('#progress-text').textContent = parts.join(' · ');
+}
+
+// What the probe printed for each one-day request, or null if it has not got that far.
+function probeSummary(job) {
+  const start = job.log.findIndex(line => line.includes(PROBE_MARKER));
+  if (start < 0) return null;
+  return `What CDS said about each one-day request:\n${job.log.slice(start + 1).join('\n')}\n\n(Nothing was downloaded.)`;
+}
+
 function renderJob(job) {
+  const active = ACTIVE.includes(job.status);
   statusEl.textContent = job.status;
   statusEl.className = `pill pill-${job.status}`;
-  $('#progress').hidden = !ACTIVE.includes(job.status);
+  renderProgress(job, active);
   $('#job-id').textContent = `${job.id} · ${PRODUCT_SHORT[job.product] || 'single levels'}`;
-  logEl.textContent = job.log.length ? job.log.join('\n') : 'Waiting for the fetcher…';
+  const summary = job.probe && job.status === 'complete' ? probeSummary(job) : null;
+  logEl.textContent = summary || (job.log.length ? job.log.join('\n') : 'Waiting for the fetcher…');
   logEl.scrollTop = logEl.scrollHeight;
   renderFiles(job);
-  const active = ACTIVE.includes(job.status);
+  resumeButton.hidden = active || isPreview(job) || !['failed', 'cancelled'].includes(job.status);
+  if (active) resumeError.hidden = true;
   cancelButton.hidden = !active;
   deleteButton.hidden = active;
-  submitButton.disabled = active;
+  setSubmitting(active);
 }
 
 async function poll(jobId, failures = 0) {
@@ -278,13 +329,13 @@ async function poll(jobId, failures = 0) {
   let job;
   try {
     const response = await fetch(`/api/jobs/${jobId}`);
-    if (response.status === 404) { logEl.textContent = 'This job no longer exists.'; submitButton.disabled = false; return; }
+    if (response.status === 404) { logEl.textContent = 'This job no longer exists.'; setSubmitting(false); return; }
     job = await response.json();
   } catch (error) {
     // Server restarting or briefly unreachable: back off, then give up.
     if (failures >= 5) {
       logEl.textContent = 'Lost contact with the server. Reload the page to resume.';
-      submitButton.disabled = false;
+      setSubmitting(false);
       return;
     }
     pollTimer = setTimeout(() => poll(jobId, failures + 1), 2000 * (failures + 1));
@@ -296,7 +347,7 @@ async function poll(jobId, failures = 0) {
     pollTimer = setTimeout(() => poll(jobId), 1500);
   } else {
     refreshRecent();
-    if (job.status === 'complete' && !job.dry_run && job.files.length) loadAnalysis(jobId);
+    if (job.status === 'complete' && !isPreview(job) && job.files.length) loadAnalysis(jobId);
   }
 }
 
@@ -325,7 +376,7 @@ async function refreshRecent() {
       item.append(
         node('span', 'badge', name.replace('Option ', '')),
         node('span', 'where', `${job.latitude.toFixed(3)}, ${job.longitude.toFixed(3)} · ${job.start} → ${job.end}`),
-        Object.assign(node('span', `pill pill-${job.status}`, job.dry_run ? 'preview' : job.status)),
+        Object.assign(node('span', `pill pill-${job.status}`, isPreview(job) ? (job.probe ? 'probe' : 'preview') : job.status)),
         node('small', '', `${(PRODUCT_SEGMENTS[job.product || 'single-levels'] || ['', ''])[1]} · job ${job.id}`)
       );
       item.addEventListener('click', event => { event.preventDefault(); openJob(job.id); });
@@ -442,10 +493,10 @@ function renderNodePanel() {
     tr.className = [n.valid ? '' : 'land', selected ? 'selected' : ''].join(' ').trim();
     columns.forEach(([key]) => {
       const value = n[key];
-      const text = key === 'lat' || key === 'lon' ? Number(value).toFixed(2)
+      const text = key === 'lat' || key === 'lon' ? fmtCoord(value)
         : value == null ? (n.valid ? '' : 'land / ice') : (key === 'depth' || key === 'distance_km' ? fmtNum(value) : fmtNum(value));
       const td = node('td', value == null && !n.valid ? '' : 'num', text);
-      if (key === 'lon' && isDefault) td.append(node('small', 'tag', 'nearest ocean'));
+      if (key === 'lat' && isDefault) td.append(node('small', 'tag', 'nearest ocean'));
       tr.append(td);
     });
     if (n.valid) {
@@ -926,7 +977,7 @@ $('#sector-form').addEventListener('submit', event => {
 // --- cross-check ------------------------------------------------------------------
 
 function fillCrosscheckSelects(jobs) {
-  const finished = jobs.filter(job => job.status === 'complete' && !job.dry_run);
+  const finished = jobs.filter(job => job.status === 'complete' && !isPreview(job));
   const fill = (select, product) => {
     const previous = select.value;
     select.replaceChildren(...finished.filter(job => (job.product || 'single-levels') === product).map(job => {
@@ -1029,12 +1080,29 @@ $('#cc-run').addEventListener('click', async () => {
   }
 });
 
+resumeButton.addEventListener('click', async () => {
+  if (!activeJob) return;
+  resumeError.hidden = true;
+  resumeButton.disabled = true;
+  try {
+    const response = await fetch(`/api/jobs/${activeJob}/resume`, { method: 'POST' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Unable to resume the download');
+    poll(activeJob);
+  } catch (error) {
+    resumeError.textContent = error.message;
+    resumeError.hidden = false;
+  } finally {
+    resumeButton.disabled = false;
+  }
+});
+
 // --- submit -----------------------------------------------------------------------
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
   showError('');
-  submitButton.disabled = true;
+  setSubmitting(true);
   const product = productSelect.value;
   const payload = {
     product, time_step: $('#time-step').value, expver: $('#expver').value,
@@ -1043,9 +1111,10 @@ form.addEventListener('submit', async event => {
     start: $('#start').value, end: $('#end').value,
     buffer: $('#buffer').value, dry_run: $('#dry-run').checked
   };
+  if (event.submitter === probeButton) Object.assign(payload, { probe: true, dry_run: false });
   const missing = product === 'single-levels' && !payload.groups.length ? 'Choose at least one variable group'
     : product === 'mars-surface' && !payload.params.length ? 'Choose at least one parameter' : '';
-  if (missing) { showError(missing); submitButton.disabled = false; return; }
+  if (missing) { showError(missing); setSubmitting(false); return; }
   try {
     const response = await fetch('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const result = await response.json();
@@ -1053,7 +1122,7 @@ form.addEventListener('submit', async event => {
     openJob(result.id);
   } catch (error) {
     showError(error.message);
-    submitButton.disabled = false;
+    setSubmitting(false);
   }
 });
 
@@ -1097,7 +1166,7 @@ window.EraExplorer = {
   /** Sizing and colours for uPlot charts; trackChart() makes the chart follow window and tab resizes. */
   chartTheme,
   trackChart(chart) { charts.push(chart); return chart; },
-  fmtNum, fmt, node, metric,
+  fmtNum, fmtCoord, fmt, node, metric, MONTHS,
   /** Colour, one value, for categorical series (comparison of several nodes). */
   palette() {
     const css = getComputedStyle(document.documentElement);

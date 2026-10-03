@@ -81,11 +81,13 @@ def test_spectra_node_summary_matches_node_analysis(tmp_path):
     assert payload["series"]["flux"]["mean"] == pytest.approx(node["flux"], abs=2e-3)   # finite depth in both
 
 
-def test_spectra_summary_subsamples_long_records(tmp_path):
+def test_spectra_summary_subsamples_long_records(tmp_path, monkeypatch):
+    monkeypatch.setattr(analysis, "MAX_NODE_RECORDS", 1000)
     path = tmp_path / "era5-spectra_2020-04.nc"
     spectra_dataset(hours=700).to_netcdf(path)
     summary = analysis.node_summary([path], "wave-spectra", 0.0, 95.0)
-    assert "every 3th record" in summary["note"] and summary["n_ocean"] == 9
+    # 700 * 9 = 6300 work items. 6300 // 1000 = 6, so stride = 7.
+    assert "one record in every 7" in summary["note"] and summary["n_ocean"] == 9
 
 
 def test_surface_only_download_gives_generic_node_values(tmp_path):

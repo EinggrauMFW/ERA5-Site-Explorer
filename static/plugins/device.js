@@ -172,13 +172,7 @@ EraExplorer.registerTab({
             panel.appendChild(savedContainer);
             
             function buildMetric(label, valueText, hintText = null) {
-                const div = EraExplorer.node('div', 'metric');
-                div.appendChild(EraExplorer.node('label', '', label));
-                div.appendChild(EraExplorer.node('div', 'value', valueText));
-                if (hintText) {
-                    div.appendChild(EraExplorer.node('div', 'hint', hintText));
-                }
-                return div;
+                return EraExplorer.metric(label, valueText, hintText);
             }
 
             function buildTr(cells, isTh = false) {
@@ -240,7 +234,7 @@ EraExplorer.registerTab({
                     const compTable = EraExplorer.node('table', 'grid-table');
                     compTable.style.width = '100%';
                     const compThead = EraExplorer.node('thead');
-                    compThead.appendChild(buildTr([{text: 'Estimator'}, {text: 'AEP (MWh/yr)'}, {text: 'Mean Power (kW)'}], true));
+                    compThead.appendChild(buildTr([{text: 'Estimator'}, {text: 'AEP (MWh/yr)', className: 'num'}, {text: 'Mean Power (kW)', className: 'num'}], true));
                     compTable.appendChild(compThead);
                     
                     const compTbody = EraExplorer.node('tbody');
@@ -264,13 +258,13 @@ EraExplorer.registerTab({
                     const mTable = EraExplorer.node('table', 'grid-table');
                     mTable.style.width = '100%';
                     const mThead = EraExplorer.node('thead');
-                    mThead.appendChild(buildTr([{text: 'Month'}, {text: 'Records'}, {text: 'Mean Power (kW)'}, {text: 'Share of Annual Energy (%)'}], true));
+                    mThead.appendChild(buildTr([{text: 'Month'}, {text: 'Records', className: 'num'}, {text: 'Mean Power (kW)', className: 'num'}, {text: 'Share of Annual Energy (%)', className: 'num'}], true));
                     mTable.appendChild(mThead);
                     
                     const mTbody = EraExplorer.node('tbody');
                     for (const m of evalData.monthly) {
                         mTbody.appendChild(buildTr([
-                            {text: m.month.toString()},
+                            {text: EraExplorer.MONTHS[m.month - 1] || m.month.toString()},
                             {text: m.records.toString(), className: 'num'},
                             {text: m.mean_power_kw !== null ? EraExplorer.fmtNum(m.mean_power_kw) : '-', className: 'num'},
                             {text: m.energy_share_pct !== null ? EraExplorer.fmtNum(m.energy_share_pct) : '-', className: 'num'}
@@ -375,7 +369,7 @@ EraExplorer.registerTab({
                     infoDiv.appendChild(title);
                     if (d.node) {
                         infoDiv.appendChild(document.createTextNode(' '));
-                        infoDiv.appendChild(EraExplorer.node('span', 'hint', `(node ${d.node[0].toFixed(3)}, ${d.node[1].toFixed(3)})`));
+                        infoDiv.appendChild(EraExplorer.node('span', 'hint', `(node ${EraExplorer.fmtCoord(d.node[0])}, ${EraExplorer.fmtCoord(d.node[1])})`));
                     }
                     
                     let aepText = '';

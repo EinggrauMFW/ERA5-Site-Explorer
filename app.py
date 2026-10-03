@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+import statistics
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -60,6 +62,10 @@ def parse_date(value: object, name: str) -> dt.date:
         raise ValueError(f"{name} must use YYYY-MM-DD") from exc
 
 
+def is_preview(job: dict) -> bool:
+    return bool(job.get("dry_run") or job.get("probe"))
+
+
 @app.errorhandler(HTTPException)
 def json_errors(error: HTTPException):
     """The browser code expects JSON from every /api route."""
@@ -100,7 +106,7 @@ def load_jobs() -> None:
         job["directory"] = folder
         if job.get("status") in ("queued", "running"):
             job["status"] = "failed"
-            job["log"].append("Interrupted by an app restart. Submit the request again to resume.")
+            job["log"].append("Interrupted by an app restart. Resume continues it.")
             save_job(job)
         jobs[job["id"]] = job
 
@@ -116,6 +122,36 @@ def set_status(job_id: str, status: str, **extra) -> None:
         job["status"] = status
         job.update(extra)
         save_job(job)
+
+
+def progress_update(state: dict | None, line: str, now: float) -> tuple[dict | None, str | None]:
+    """Parse a ::progress:: line. Returns (new_state, log_line)."""
+    if not line.startswith("::progress::"):
+        return state, line.rstrip()
+    try:
+        prog = json.loads(line.split("::progress::", 1)[1].strip())
+        done, total, skipped = prog["done"], prog["total"], prog["skipped"]
+    except (ValueError, KeyError, TypeError):
+        return state, line.rstrip()
+
+    state = state or {"durations": []}
+    durations = state["durations"]
+
+    if "last_time" in state and state.get("skipped") == skipped:
+        durations.append(now - state["last_time"])
+
+    eta_seconds = None
+    if len(durations) >= 2:
+        eta_seconds = statistics.median(durations) * (total - done)
+
+    state.update({
+        "done": done,
+        "total": total,
+        "skipped": skipped,
+        "eta_seconds": eta_seconds,
+        "last_time": now
+    })
+    return state, None
 
 
 def run_job(job_id: str, command: list[str]) -> None:
@@ -148,9 +184,18 @@ def run_job(job_id: str, command: list[str]) -> None:
             process.terminate()
     try:
         assert process.stdout is not None
+        prog_state = None
         for line in process.stdout:
+            prog_state, log_line = progress_update(prog_state, line, time.monotonic())
             with jobs_lock:
-                append_log(jobs[job_id], line.rstrip())
+                if prog_state:
+                    jobs[job_id]["progress"] = {
+                        k: v for k, v in prog_state.items()
+                        if k in ("done", "total", "skipped", "eta_seconds")
+                    }
+                if log_line is not None:
+                    append_log(jobs[job_id], log_line)
+                save_job(jobs[job_id])
         return_code = process.wait()
     finally:
         with jobs_lock:
@@ -252,8 +297,8 @@ def completed_job(job_id: str, product: str | None = None) -> dict:
         snapshot = dict(job)
     if snapshot["status"] != "complete":
         abort(409, description="The download is not complete")
-    if snapshot["dry_run"]:
-        abort(409, description="Dry runs do not create data to analyse")
+    if is_preview(snapshot):
+        abort(409, description="Previews do not create data to analyse")
     snapshot.setdefault("product", fetch_era5_waves.DEFAULT_PRODUCT)
     if product and snapshot["product"] != product:
         abort(409, description=f"Job {job_id} is {snapshot['product']}, expected {product}")
@@ -297,11 +342,38 @@ def list_jobs():
     with jobs_lock:
         summary = [
             {key: job.get(key) for key in (
-                "id", "status", "created", "latitude", "longitude", "start", "end", "dry_run",
+                "id", "status", "created", "latitude", "longitude", "start", "end", "dry_run", "probe",
                 "product")}
             for job in jobs.values()
         ]
     return jsonify(sorted(summary, key=lambda job: job["created"] or "", reverse=True))
+
+
+def build_command(job: dict) -> list[str]:
+    command = [
+        sys.executable,
+        "-u",
+        str(FETCHER),
+        "--latitude", str(job["latitude"]),
+        "--longitude", str(job["longitude"]),
+        "--start", job["start"],
+        "--end", job["end"],
+        "--buffer", str(job["buffer"]),
+        "--output", str(job["directory"]),
+        "--product", job["product"],
+        "--time-step", str(job.get("time_step") or fetch_era5_waves.DEFAULT_TIME_STEP[job["product"]]),
+    ]
+    if job["product"] != "single-levels":
+        command += ["--expver", str(job.get("expver", "auto"))]
+    if job.get("groups"):
+        command += ["--groups", ",".join(job["groups"])]
+    if job.get("params"):
+        command += ["--params", ",".join(job["params"])]
+    if job.get("dry_run"):
+        command.append("--dry-run")
+    if job.get("probe"):
+        command.append("--probe")
+    return command
 
 
 @app.post("/api/jobs")
@@ -328,28 +400,8 @@ def create_job():
     job_id = uuid.uuid4().hex[:12]
     output = DOWNLOADS / job_id
     output.mkdir()
-    command = [
-        sys.executable,
-        "-u",
-        str(FETCHER),
-        "--latitude", str(latitude),
-        "--longitude", str(longitude),
-        "--start", start.isoformat(),
-        "--end", end.isoformat(),
-        "--buffer", str(buffer),
-        "--output", str(output),
-        "--product", product,
-        "--time-step", str(options["time_step"]),
-    ]
-    if product != "single-levels":
-        command += ["--expver", expver]
-    if options["groups"]:
-        command += ["--groups", ",".join(options["groups"])]
-    if options["params"]:
-        command += ["--params", ",".join(options["params"])]
     dry_run = bool(payload.get("dry_run"))
-    if dry_run:
-        command.append("--dry-run")
+    probe = bool(payload.get("probe"))
 
     with jobs_lock:
         job = jobs[job_id] = {
@@ -370,10 +422,14 @@ def create_job():
             "start": start.isoformat(),
             "end": end.isoformat(),
             "dry_run": dry_run,
+            "probe": probe,
         }
         save_job(job)
+
+    command = build_command(job)
     executor.submit(run_job, job_id, command)
     return jsonify(public_job(job_id)), 202
+
 
 
 @app.get("/api/jobs/<job_id>")
@@ -396,6 +452,27 @@ def cancel_job(job_id: str):
     if process is not None:
         process.terminate()
     return jsonify(public_job(job_id))
+
+
+@app.post("/api/jobs/<job_id>/resume")
+def resume_job(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            abort(404)
+        if job["status"] not in ("failed", "cancelled"):
+            return jsonify(error=f"Cannot resume a {job['status']} job"), 409
+        if is_preview(job):
+            return jsonify(error="Cannot resume a preview job"), 409
+
+        job["status"] = "queued"
+        job["return_code"] = None
+        job.pop("progress", None)
+        append_log(job, "Resumed: files already on disk are kept.")
+        save_job(job)
+    command = build_command(job)
+    executor.submit(run_job, job_id, command)
+    return jsonify(public_job(job_id)), 202
 
 
 @app.delete("/api/jobs/<job_id>")

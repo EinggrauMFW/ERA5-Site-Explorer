@@ -83,11 +83,15 @@ def compare(frame_a: pd.DataFrame, frame_b: pd.DataFrame, tolerances: dict | Non
         within = (np.abs(diff) <= tolerance * np.abs(a)) if relative else (np.abs(diff) <= tolerance)
         # Direction differences are averaged as vectors: near +-180 degrees an arithmetic mean cancels out.
         bias = float(wc.angular_difference(wc.vector_mean_direction(diff), 0.0)) if kind == "circ" else float(np.mean(diff))
+        # A constant series has no defined correlation; None keeps the JSON valid (NaN is not JSON).
+        correlation = None
+        if relative and len(a) > 2 and np.std(a) > 0 and np.std(b) > 0:
+            correlation = round(float(np.corrcoef(a, b)[0, 1]), 4)
         result = {
             "key": key, "label": label, "unit": unit, "available": True, "expectation": expectation,
             "n": int(ok.sum()), "bias": round(bias, 4), "rmse": round(float(np.sqrt(np.mean(diff**2))), 4),
             "bias_pct": round(100 * bias / float(np.mean(a)), 2) if relative and np.mean(a) else None,
-            "correlation": round(float(np.corrcoef(a, b)[0, 1]), 4) if relative and len(a) > 2 else None,
+            "correlation": correlation,
             "tolerance": tolerance, "tolerance_unit": "relative" if relative else "degrees",
             "within_tolerance_pct": round(float(within.mean() * 100), 1),
             "abs_diff_p50": round(float(np.percentile(np.abs(diff), 50)), 4),

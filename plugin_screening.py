@@ -6,7 +6,7 @@ from flask import jsonify, send_file
 import plugins
 import screening
 
-SCREENING_VERSION = 1
+SCREENING_VERSION = 2
 
 def _load_or_compute(view):
     cache_path = view.directory / "screening.json"
