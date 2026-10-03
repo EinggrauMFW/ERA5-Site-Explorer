@@ -250,10 +250,7 @@ seconds on the development machine. On the synthetic case that was measured, sam
 by under 0.1% of their value, but that data had a smooth seasonal cycle, which is the best case for
 sampling; no real multi-year spectra record has been measured (verification item 15).
 
-**Overlapping files.** The per-node analysis drops duplicate timestamps (section 2), but the node table and
-screening do not: a record that appears in two files is counted twice. This was read from the code, not
-measured; a fully duplicated file leaves a mean unchanged, so it would show only with partial overlap, in
-the counts and in the weighting of the overlapped records.
+**Overlapping files.** When two files cover the same timestamp it is counted once and the first file in name order is used, as in the main analysis.
 
 ## 8. Long-term statistics and extremes
 

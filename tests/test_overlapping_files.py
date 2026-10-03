@@ -157,3 +157,18 @@ def test_the_sampling_stride_is_decided_by_unique_records(overlapping_b, monkeyp
     summary = analysis.node_summary([pa, pb], "wave-spectra", *NODE)
     assert summary["note"] is None
     assert analysis.find_node(summary, *NODE)["hm0"] == pytest.approx(EXPECTED_B_HM0, rel=0.03)
+
+
+# --- generic (surface-field) downloads in several files ------------------------------------------------
+
+def test_a_surface_download_split_over_several_files_is_summarised_over_all_of_them(tmp_path):
+    """Added by the orchestrator: the node table used to read only the first non-wave file."""
+    paths = []
+    for name, start, kelvin in (("a.nc", "2020-04-01", 300.0), ("b.nc", "2020-04-03", 310.0)):
+        ds = shifted(wave_dataset(48), start).drop_vars(["swh", "pp1d", "mwp", "mwd"])
+        ds["t2m"] = (("valid_time", "latitude", "longitude"), np.full((48, 3, 3), kelvin))
+        paths.append(tmp_path / name)
+        ds.to_netcdf(paths[-1])
+    summary = analysis.node_summary(paths, "mars-surface", *NODE)
+    assert summary["kind"] == "generic"
+    assert analysis.find_node(summary, *NODE)["value"] == pytest.approx((300.0 + 310.0) / 2 - 273.15, abs=2e-3)

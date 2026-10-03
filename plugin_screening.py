@@ -7,7 +7,7 @@ import plugins
 import screening
 from netcdf_safety import NETCDF_LOCK, atomic_write_text
 
-SCREENING_VERSION = 2
+SCREENING_VERSION = 3
 
 def _load_or_compute(view):
     with NETCDF_LOCK:
