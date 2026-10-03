@@ -173,6 +173,7 @@ def _compute_bulk(paths: list[Path], depth_grid, site_lat: float, site_lon: floa
     lats = lons = None
 
     no_mwp = False
+    seen_times = set()
 
     for path in paths:
         with NETCDF_LOCK:
@@ -182,30 +183,40 @@ def _compute_bulk(paths: list[Path], depth_grid, site_lat: float, site_lon: floa
                     continue
                 if "swh" not in names:
                     continue
+
+                time_name = analysis.time_name_of(ds)
+                mask = analysis.unique_time_mask(ds[time_name].values, seen_times)
+                if not mask.any():
+                    if lats is None:
+                        lats, lons = ds["latitude"].values, ds["longitude"].values
+                    continue
+
                 if "expver" in ds.dims:
                     ds = ds.mean("expver", skipna=True)
 
-            time_name = analysis.time_name_of(ds)
-            lats = ds["latitude"].values
-            lons = ds["longitude"].values
+                lats = ds["latitude"].values
+                lons = ds["longitude"].values
 
-            times = pd.DatetimeIndex(ds[time_name].values)
-            all_months.append(times.month.to_numpy())
+                times = pd.DatetimeIndex(ds[time_name].values[mask])
+                all_months.append(times.month.to_numpy())
 
-            def field(name):
-                data = ds[name]
-                extra = [d for d in data.dims if d not in (time_name, "latitude", "longitude")]
-                if extra:
-                    data = data.isel({d: 0 for d in extra})
-                return data.transpose(time_name, "latitude", "longitude").values.astype(float)
+                kept_idx = np.flatnonzero(mask)
 
-            swh = field("swh")
-            all_swh.append(swh)
-            if "mwp" in names:
-                all_mwp.append(field("mwp"))
-            else:
-                all_mwp.append(np.full_like(swh, np.nan))
-                no_mwp = True
+                def field(name):
+                    data = ds[name]
+                    extra = [d for d in data.dims if d not in (time_name, "latitude", "longitude")]
+                    if extra:
+                        data = data.isel({d: 0 for d in extra})
+                    data = data.isel({time_name: kept_idx})
+                    return data.transpose(time_name, "latitude", "longitude").values.astype(float)
+
+                swh = field("swh")
+                all_swh.append(swh)
+                if "mwp" in names:
+                    all_mwp.append(field("mwp"))
+                else:
+                    all_mwp.append(np.full_like(swh, np.nan))
+                    no_mwp = True
 
     if lats is None:
         raise ValueError("No wave variables found")

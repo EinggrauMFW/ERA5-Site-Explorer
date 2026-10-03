@@ -18,6 +18,7 @@ import inspect
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -680,7 +681,8 @@ raise SystemExit(f.main(sys.argv[3:]))
         assert time.monotonic() - started < 10
         assert output.splitlines().count("parent process ended; stopping") == 1
         assert "THREAD_DAEMON=True" in output, "main must start a daemon watchdog thread"
-        intervals = [float(line.split("=", 1)[1]) for line in output.splitlines() if line.startswith("WATCHDOG_SLEEP=")]
+        # The watchdog thread and the main thread both print unbuffered, so a marker can share a line with other output.
+        intervals = [float(value) for value in re.findall(r"WATCHDOG_SLEEP=(\d+(?:\.\d+)?)", output)]
         # The 10 s exit bound above is the behaviour; if the watchdog sleeps via time.sleep it must poll at least every 2 s.
         assert all(interval <= 2 for interval in intervals), "Watchdog polls at least every 2 seconds"
     finally:

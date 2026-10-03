@@ -14,7 +14,7 @@ import longterm
 import plugins
 
 
-LONGTERM_VERSION = 1
+LONGTERM_VERSION = 2
 
 def register(app: Flask, ctx: plugins.PluginContext) -> None:
 
