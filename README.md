@@ -51,7 +51,8 @@ prints the exact CDS requests, the grid area and an uncompressed size estimate, 
 `provenance.json`, without contacting CDS.
 
 Optional environment variables (see `.env.example`; they are not loaded automatically): `PORT`,
-`MAX_JOBS` (concurrent downloads, default 2), `DOWNLOADS_DIR`.
+`MAX_JOBS` (concurrent downloads, default 2), `DOWNLOADS_DIR`, `DEVICES_DIR` (device catalogue, see
+[Device catalogue](#device-catalogue)).
 
 `wavespectra` is optional (`pip install wavespectra`). Without it, spectral partitioning and one
 cross-check test report as unavailable; everything else works.
@@ -239,7 +240,8 @@ the selected grid node, and run on both routes unless noted.
   width you give), monthly energy shares and an occupancy table, using nearest-bin and bilinear lookup.
   When the matrix's period axis is unknown, Te- and Tp-indexed results are both shown and the AEP spread
   is the bound of that ambiguity; they are never blended. The bundled example matrix is synthetic, not a
-  real device.
+  real device. **Choose from catalogue** opens a picker for matrices kept in a folder (see below): each is
+  shown as a heatmap with its source and caveats before you pick it.
 - **Long-term.** Monthly and seasonal climatology with the P10–P90 band across years; COV; a monthly and a
   seasonal variability index `(max − min) / annual mean`; interannual variation of complete years; and
   extreme Hm0 by peaks over threshold: runs declustering, a generalised Pareto fit by maximum
@@ -252,6 +254,29 @@ the selected grid node, and run on both routes unless noted.
   with unit-suffixed column names, the rose and scatter diagrams as standalone SVG (light or dark), and a
   zip bundle with all of it, the verbatim `provenance.json`, the node's `timeseries.csv` and a README of the
   bin and direction conventions. The tab lists exactly what exists for the job.
+
+### Device catalogue
+
+Power matrices are not shipped with the app: their provenance is the user's to judge and publish. Point
+`DEVICES_DIR` at a folder (default `devices/` next to `app.py`, which git ignores) holding:
+
+- `devices.json`: an object keyed by device id (`a-z`, `0-9`, `_`, `-`, up to 60 characters). Each entry has
+  `name`, `hs_m` (Hm0 values in m), `period_s` (periods in s) and `power_kw` (one row per Hm0, one value per
+  period, `null` where the source leaves a cell undefined). Optional: `rated_kw`, `width_m`, `period_type`
+  (`"Tp"` or `"Te"` as printed on the source), `bin_convention` (`"centres"`, the default, or
+  `"lower_edges"`), `source`, `provenance`, `notes` (a list of caveats shown to the user) and `file` (the CSV
+  with the same data).
+- `*.csv`: matrices in the same layout as the Device tab's upload (first column Hm0, header row period,
+  empty cell = undefined). A CSV not named by an entry becomes a device with no metadata.
+
+Entries are checked one by one; an invalid one is skipped with a warning shown in the picker and never hides
+another. A synthetic example is always listed. The picker shows the matrix on its own bins (Hm0 upward,
+period to the right), hatches undefined cells (the assessment counts them as 0 kW), reads out the value under
+the pointer or keyboard cursor, lists the caveats, and counts the cells at 99% of the table maximum, which
+reveals a plateau such as rated power or a cap on a digitised colour scale. Rated power, width and period axis
+can be edited before picking; picking fills the Device form and runs the assessment, and the result and the
+exported report carry the matrix's source and caveats. The picker does not validate a matrix; it only
+shows what the source says.
 
 ### Adding a tool
 
