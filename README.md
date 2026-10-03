@@ -14,7 +14,8 @@ and needs no account or token.
 > from one). Option B has no completed job: five were refused by CDS as too large, one was cancelled, and
 > one 6-hourly July 2026 job downloaded its 16 files but was marked failed by an app restart. Option A and
 > Option B have not been compared on real data, and no multi-year record has been analysed.
-> [docs/verification.md](docs/verification.md) lists what was verified and what is still open. Treat results
+> [docs/verification.md](docs/verification.md) lists what was verified and what is still open, and
+> [docs/numerics.md](docs/numerics.md) explains how every number is computed. Treat results
 > as a screening aid, not a resource assessment.
 
 ## Screenshots
@@ -159,6 +160,10 @@ system and can be switched in the header (the choice is remembered). It is usabl
 
 ## Definitions used everywhere
 
+This section gives the definitions; [docs/numerics.md](docs/numerics.md) gives the full methods behind them
+(spectral moments, energy flux, extreme values, device model, cross-check) and lists the choices that are this
+app's own.
+
 `m_n = ∫ fⁿ E(f) df`. These quantities differ and are never given the same label:
 
 | Symbol | Definition | ERA5 name |
@@ -183,6 +188,8 @@ place. The ordering Tm02 ≤ Tm01 ≤ Te must hold for every record and is check
 `8766 h` per year.
 
 ## Analysis
+
+The formulas and algorithms for everything below are in [docs/numerics.md](docs/numerics.md).
 
 **Option A** (per record, nearest ocean cell, distance and model depth shown): deep-water flux
 statistics, monthly climatology, Hm0–Te scatter (0.5 m × 1 s bins, half-open, hours and energy shares,
@@ -305,7 +312,7 @@ can reach it can start CDS downloads as you.
 | `plugin_*.py` with `screening.py`, `device.py`, `longterm.py`, `report.py` | The four resource tools |
 | `templates/`, `static/` | Interface; `static/plugins/` holds the tool frontends |
 | `tests/` | Offline test suite on synthetic data |
-| `docs/` | `verification.md` and the work-package specifications |
+| `docs/` | `numerics.md` (methods), `verification.md` (what is verified) and the work-package specifications |
 
 ## Tests
 
@@ -318,7 +325,8 @@ The suite runs offline. Numerical tests compare against hand-derived values and,
 process with a known GPD tail. GitHub Actions runs it on Ubuntu and Windows with Python 3.12 and 3.13. The
 lower bounds in `requirements.txt` are the oldest versions that pass the suite on Python 3.13 (numpy 2.1,
 pandas 2.2.3, scipy 1.14.1, xarray 2025.1, netCDF4 1.7.2, Flask 3.0, cdsapi 0.7.7); newer ones are tested
-too. The workflow file has not been run on GitHub yet.
+too. The workflow passed on the pull request that added it (four jobs: Ubuntu and Windows, Python 3.12
+and 3.13).
 
 ## License
 
