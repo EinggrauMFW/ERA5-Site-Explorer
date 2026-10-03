@@ -263,8 +263,8 @@ says so.
 
 **Monthly climatology.** For month $m$: the mean of $J$, Hm0 and Te over all records in that month. Across
 years, the P10, P50 and P90 of the per-year monthly means (only when at least three years have that month).
-**Seasonal** means pool records by season as in section 7, and each season's share of the annual total is
-defined only when all four seasons have data.
+**Seasonal** means pool records by season as in section 7, and the season's share of the annual flux,
+treating the four seasons as equal in length, is defined only when all four seasons have data.
 
 **Annual mean.** The mean of the twelve monthly means $\bar J_{\mathrm{an}}$ (defined only when all twelve
 months have data). It is not the mean of all records: months with more records do not weigh more.
@@ -280,9 +280,9 @@ resource. Here the annual mean is the mean of the monthly means, and seasons are
 cited papers were not read, only the description in the first. **COV** of the whole record is
 $\sigma_J/\bar J$ over all per-record fluxes; no source for that exact definition was checked.
 
-**Interannual variation.** For *complete* years only, meaning calendar years with all twelve months present
-and at least 90% of the expected records, and needing at least three of them: the annual mean flux of each
-year, its anomaly in percent of the mean of the annual means, the COV of the annual means, and the ratio
+**Interannual variation.** For *complete* years only, meaning calendar years where every month has at least
+90% of expected records (ruling out mostly missing months and partial years), and needing at least three of them:
+the annual mean flux of each year, its anomaly in percent of the mean of the annual means, the COV of the annual means, and the ratio
 of the largest to the smallest annual mean. It does not assess ENSO or the Indian Ocean Dipole; no climate-index
 data are used.
 
@@ -294,7 +294,7 @@ data are used.
    maximum, so storm peaks are treated as independent. The number of cluster peaks is $n$.
 3. **Enough peaks.** If $n$ is below 30, no fit is made and the reason is shown.
 4. **Excesses and rate.** $y_i = x_i - u$ for each peak $x_i$, and the event rate
-   $\lambda = n / (\text{record length in years})$, using the exact span.
+   $\lambda = n / \text{observed\_years}$, using the time Hm0 was actually observed to exclude gaps.
 5. **Fit.** A generalised Pareto distribution is fitted to the excesses by maximum likelihood,
    `scipy.stats.genpareto.fit(y, floc=0)`, giving shape $\xi$ and scale $\sigma$. A warning is shown if
    $|\xi| > 0.5$, where the estimator is no longer regular.
@@ -302,7 +302,7 @@ data are used.
 
 $$x_T = u + \frac{\sigma}{\xi}\Big((\lambda T)^{\xi} - 1\Big)\quad(\xi \ne 0),\qquad x_T = u + \sigma\ln(\lambda T)\quad(|\xi| < 10^{-6})$$
 
-   A warning appears when $T$ exceeds three times the record length: the extrapolation is unreliable.
+   A warning appears when $T$ exceeds three times the observed record length: the extrapolation is unreliable.
 7. **Interval** (bootstrap, 300 replicates by default, fixed seed). In each replicate, the number of peaks is
    drawn from a Poisson distribution with mean $\lambda\times$years (at least 10), the excesses are resampled
    with replacement, the GPD is refitted at the same threshold, and $x_T$ is recomputed with that replicate's
