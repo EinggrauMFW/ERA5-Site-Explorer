@@ -6,9 +6,11 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -20,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
+import xarray as xr
 from werkzeug.exceptions import HTTPException
 from flask import Flask, abort, jsonify, render_template, request, send_file, send_from_directory
 
@@ -47,6 +50,10 @@ jobs_lock = threading.Lock()
 executor = ThreadPoolExecutor(max_workers=MAX_JOBS, thread_name_prefix="era5-job")
 
 
+def _is_json_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def parse_number(value: object, name: str, minimum: float, maximum: float) -> float:
     try:
         number = float(value)
@@ -68,6 +75,87 @@ def is_preview(job: dict) -> bool:
     return bool(job.get("dry_run") or job.get("probe"))
 
 
+@app.before_request
+def check_host_and_origin():
+    raw_host = request.headers.get("Host")
+    if not raw_host or not raw_host.strip():
+        return jsonify(error="Missing or empty Host header"), 403
+
+    raw_host = raw_host.strip()
+    if raw_host.startswith("["):
+        bracket_end = raw_host.find("]")
+        if bracket_end == -1:
+            return jsonify(error="Invalid Host header"), 403
+        hostname = raw_host[:bracket_end + 1].lower()
+        remainder = raw_host[bracket_end + 1:]
+        if remainder and not remainder.startswith(":"):
+            return jsonify(error="Invalid Host header"), 403
+    else:
+        hostname = raw_host.split(":", 1)[0].lower()
+
+    allowed = {"127.0.0.1", "localhost", "[::1]"}
+    extra_hosts = os.environ.get("ALLOWED_HOSTS", "")
+    if extra_hosts:
+        for h in extra_hosts.split(","):
+            h = h.strip().lower()
+            if h:
+                allowed.add(h)
+
+    if hostname not in allowed:
+        return jsonify(error=f"Forbidden host: {hostname}"), 403
+
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        origin = request.headers.get("Origin")
+        if origin is not None:
+            expected_origin = f"{request.scheme}://{raw_host}".lower()
+            if not origin or origin.strip().lower() != expected_origin:
+                return jsonify(error="Forbidden cross-origin request"), 403
+
+
+def _safe_data_file_error(exc: Exception, job_id: str | None = None):
+    if not job_id and request.view_args:
+        job_id = request.view_args.get("job_id")
+    if not job_id:
+        m = re.search(r"/api/jobs/([0-9a-f]{12})", request.path)
+        if m:
+            job_id = m.group(1)
+
+    folder = None
+    if job_id:
+        with jobs_lock:
+            if job_id in jobs:
+                folder = jobs[job_id].get("directory")
+        if not folder and (DOWNLOADS / job_id).is_dir():
+            folder = DOWNLOADS / job_id
+
+    bad_name = None
+    if folder:
+        nc_files = sorted(folder.glob("*.nc"))
+        exc_str = str(exc)
+        for f in nc_files:
+            if f.name in exc_str:
+                bad_name = f.name
+                break
+        if not bad_name:
+            for f in nc_files:
+                try:
+                    with NETCDF_LOCK:
+                        with xr.open_dataset(f, engine="netcdf4"):
+                            pass
+                except Exception:
+                    bad_name = f.name
+                    break
+        if not bad_name and isinstance(exc, OSError) and len(nc_files) == 1:
+            bad_name = nc_files[0].name
+
+    if bad_name:
+        return jsonify(error=f"The data file {bad_name} could not be read: it may be incomplete or corrupt."), 422
+    if isinstance(exc, OSError):  # an OS error message carries the full file path: keep it out of the response
+        return jsonify(error="A data file could not be read: it may be incomplete or corrupt."), 422
+
+    return jsonify(error=str(exc)), 422
+
+
 @app.errorhandler(HTTPException)
 def json_errors(error: HTTPException):
     """The browser code expects JSON from every /api route."""
@@ -80,7 +168,15 @@ def json_errors(error: HTTPException):
 def value_errors(error: ValueError):
     """Plugin routes raise ValueError for bad input; show it as a 422 like the core routes do."""
     if request.path.startswith("/api/"):
-        return jsonify(error=str(error)), 422
+        return _safe_data_file_error(error)
+    raise error
+
+
+@app.errorhandler(OSError)
+def os_errors(error: OSError):
+    """NetCDF and file errors on API routes return 422 with a safe filename-only message."""
+    if request.path.startswith("/api/"):
+        return _safe_data_file_error(error)
     raise error
 
 
@@ -95,8 +191,8 @@ def save_job(job: dict) -> None:
     temporary.replace(target)
 
 
-def load_jobs() -> None:
-    """Rebuild the job list from disk; jobs cut off by a restart become failed."""
+def load_jobs(mark_interrupted: bool = False) -> None:
+    """Rebuild the job list from disk; jobs cut off by a restart become failed if mark_interrupted=True."""
     for folder in DOWNLOADS.iterdir():
         record_path = folder / "job.json"
         if not (JOB_ID.match(folder.name) and record_path.is_file()):
@@ -105,8 +201,17 @@ def load_jobs() -> None:
             job = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if not isinstance(job, dict):
+            logging.warning("Skipping job record %s: not a JSON object", record_path)
+            continue
+        if not all(k in job for k in ("id", "status", "log")):
+            logging.warning("Skipping job record %s: missing required keys", record_path)
+            continue
+        if not isinstance(job["id"], str) or not isinstance(job["status"], str) or not isinstance(job["log"], list):
+            logging.warning("Skipping job record %s: invalid field types", record_path)
+            continue
         job["directory"] = folder
-        if job.get("status") in ("queued", "running"):
+        if mark_interrupted and job.get("status") in ("queued", "running"):
             job["status"] = "failed"
             job["log"].append("Interrupted by an app restart. Resume continues it.")
             save_job(job)
@@ -386,10 +491,33 @@ def build_command(job: dict) -> list[str]:
 
 @app.post("/api/jobs")
 def create_job():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Request body must be a JSON object"), 400
+
+    for num_field, required in (("latitude", True), ("longitude", True), ("buffer", False), ("time_step", False)):
+        if num_field in payload:
+            if not _is_json_number(payload[num_field]):
+                return jsonify(error=f"{num_field} must be a number"), 400
+        elif required:
+            return jsonify(error=f"{num_field} is required"), 400
+
+    for str_field, required in (("start", True), ("end", True), ("product", False), ("expver", False)):
+        if str_field in payload:
+            if not isinstance(payload[str_field], str):
+                return jsonify(error=f"{str_field} must be a string"), 400
+        elif required:
+            return jsonify(error=f"{str_field} is required"), 400
+
+    for list_field in ("groups", "params"):
+        if list_field in payload:
+            val = payload[list_field]
+            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                return jsonify(error=f"{list_field} must be a list of strings"), 400
+
     try:
-        latitude = parse_number(payload.get("latitude"), "Latitude", -90, 90)
-        longitude = parse_number(payload.get("longitude"), "Longitude", -180, 180)
+        latitude = parse_number(payload["latitude"], "Latitude", -90, 90)
+        longitude = parse_number(payload["longitude"], "Longitude", -180, 180)
         options = fetch_era5_waves.normalise_options(
             payload.get("product"), payload.get("groups"), payload.get("params"),
             payload.get("time_step"))
@@ -399,8 +527,8 @@ def create_job():
             raise ValueError("ERA5 version must be auto, 1 (final) or 5 (preliminary ERA5T)")
         buffer = parse_number(payload.get("buffer", 0.5), "Buffer", 0,
                               fetch_era5_waves.MAX_BUFFER[product])
-        start = parse_date(payload.get("start"), "Start date")
-        end = parse_date(payload.get("end"), "End date")
+        start = parse_date(payload["start"], "Start date")
+        end = parse_date(payload["end"], "End date")
         fetch_era5_waves.validate_period(start, end, product=product)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
@@ -516,10 +644,8 @@ def get_analysis(job_id: str):
             sections.insert(2, section)  # next to the flux summary
             result = {**result, "sections": sections}
         return jsonify(result)
-    except ValueError as exc:
-        return jsonify(error=str(exc)), 422
-    except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
-        return jsonify(error=str(exc)), 422
+    except (ValueError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+        return _safe_data_file_error(exc, job_id)
 
 
 def _read_bytes_safe(path: Path) -> bytes:
@@ -544,7 +670,7 @@ def get_timeseries(job_id: str):
             cached_analysis(job["directory"], files, job["latitude"], job["longitude"], job["product"], node)
             data = _read_bytes_safe(path)
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
-        return jsonify(error=str(exc)), 422
+        return _safe_data_file_error(exc, job_id)
     return send_file(io.BytesIO(data), mimetype="text/csv", as_attachment=True,
                      download_name=f"era5_{job['product']}_{job_id}{where}_timeseries.csv")
 
@@ -557,7 +683,7 @@ def get_nodes(job_id: str):
     try:
         return jsonify(cached_nodes(job["directory"], files, job["latitude"], job["longitude"], job["product"]))
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
-        return jsonify(error=str(exc)), 422
+        return _safe_data_file_error(exc, job_id)
 
 
 @app.get("/api/jobs/<job_id>/provenance")
@@ -594,7 +720,7 @@ def get_crosscheck():
         result = crosscheck.compare(frames[0], frames[1], cell_a=cells[0], cell_b=cells[1],
                                     depth_m=payloads[1].get("depth_m"))
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
-        return jsonify(error=str(exc)), 422
+        return _safe_data_file_error(exc)
     result["job_a"], result["job_b"] = job_a["id"], job_b["id"]
     result["node"] = {"latitude": cells[1][0], "longitude": cells[1][1]}
     return jsonify(result)
@@ -631,5 +757,21 @@ def job_view(job_id: str, product: str | None = None) -> plugins.JobView:
 load_jobs()
 LOADED_PLUGINS = plugins.load_plugins(app, plugins.PluginContext(job=job_view, downloads=DOWNLOADS))
 
+def main() -> int:
+    try:
+        port = int(os.environ.get("PORT", "5000"))
+    except ValueError:
+        port = 5000
+    host = "127.0.0.1"
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.0)
+        if s.connect_ex((host, port)) == 0:
+            print(f"error: port {port} is already in use (another copy of the app?). Stop it or set PORT.")
+            return 1
+    load_jobs(mark_interrupted=True)
+    app.run(host=host, port=port, threaded=True, debug=False)
+    return 0
+
+
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=False)
+    sys.exit(main())

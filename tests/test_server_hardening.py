@@ -118,7 +118,7 @@ def occupied_port():
         listener.bind(("127.0.0.1", 0))
         listener.listen(16)
         port = listener.getsockname()[1]
-        assert port >= 5090, "Use an ephemeral high port, never port 5000"
+        assert port != 5000, "Use an ephemeral port, never port 5000 (the user's running app)"
         yield port
 
 
@@ -421,7 +421,7 @@ def test_real_server_on_scratch_high_port_rejects_foreign_host_and_second_copy(m
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    assert port >= 5090
+    assert port != 5000
     monkeypatch.setenv("PORT", str(port))
     env = child_env(monkeypatch)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

@@ -44,7 +44,7 @@ def test_job_is_persisted_and_survives_reload(client):
     saved = appmodule.DOWNLOADS / job["id"] / "job.json"
     assert json.loads(saved.read_text())["status"] == "queued"
     appmodule.jobs.clear()
-    appmodule.load_jobs()
+    appmodule.load_jobs(mark_interrupted=True)
     reloaded = client.get(f"/api/jobs/{job['id']}").get_json()
     assert reloaded["status"] == "failed"  # it was queued when the "app" stopped
     assert any("restart" in line for line in reloaded["log"])

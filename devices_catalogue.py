@@ -59,7 +59,10 @@ def _parse_period_type(pt) -> str:
 
 
 def _is_finite_num(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and np.isfinite(v)
+    try:
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and np.isfinite(v)
+    except (TypeError, OverflowError, ValueError):
+        return False
 
 
 def _is_finite_pos_num(v) -> bool:
@@ -251,8 +254,8 @@ def load_catalogue(directory_path: Optional[str] = None) -> Catalogue:
                                 csv_to_skip.add(file_name)
                             try:
                                 add_device(_entry_to_device(dev_id, entry))
-                            except ValueError as e:
-                                warnings.append(str(e))
+                            except (ValueError, TypeError, OverflowError) as e:
+                                warnings.append(str(e) if dev_id in str(e) else f"Device '{dev_id}': {e}")
                     elif json_data is not None:
                         warnings.append("devices.json is not an object.")
             except (OSError, ValueError) as e:
@@ -297,8 +300,10 @@ def load_catalogue(directory_path: Optional[str] = None) -> Catalogue:
                     power_kw=power_kw_clean,
                 )
                 add_device(summary)
-            except (OSError, ValueError) as e:
+            except OSError as e:
                 warnings.append(f"Failed to read {csv_path.name}: {e}")
+            except (ValueError, TypeError, OverflowError) as e:
+                warnings.append(f"Device '{dev_id}' ({csv_path.name}): {e}")
 
     example_matrix = parse_power_matrix(example_matrix_csv(), "centres")
     hs_m_ex = example_matrix.hm0_centres.tolist()

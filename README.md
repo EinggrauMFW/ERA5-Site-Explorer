@@ -323,7 +323,8 @@ Jobs are reloaded on start (a job interrupted by a restart shows as failed and c
 **Cancel request** stops a queued or running download and **Delete files** removes a job and its data.
 
 The server binds to `127.0.0.1` and has no authentication. Do not expose it beyond your machine: anyone who
-can reach it can start CDS downloads as you.
+can reach it can start CDS downloads as you. The app is for the local machine only; optional extra hostnames
+can be configured via `ALLOWED_HOSTS`.
 
 ## Code layout
 
