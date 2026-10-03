@@ -23,6 +23,7 @@ import pandas as pd
 import xarray as xr
 
 import wavecalc as wc
+from netcdf_safety import NETCDF_LOCK
 
 ANALYSIS_VERSION = 7
 
@@ -185,18 +186,19 @@ def read_depth(bathymetry_files: list[Path], cell: tuple[float, float] | None) -
         return None
     with tempfile.TemporaryDirectory(prefix="era5-depth-") as temp_name:
         for path in netcdf_paths(bathymetry_files, Path(temp_name)):
-            with xr.open_dataset(path, engine="netcdf4") as ds:
-                name = next((v for v in ds.data_vars if v in ("wmb", "dpth") or "bathy" in v.lower()), None)
-                if name is None:
-                    continue
-                data = ds[name]
-                extra = [d for d in data.dims if d not in ("latitude", "longitude")]
-                if extra:
-                    data = data.isel({d: 0 for d in extra})
-                value = float(data.isel(latitude=cell_index(ds, cell)[0],
-                                        longitude=cell_index(ds, cell)[1]).values)
-                if np.isfinite(value) and value > 0:
-                    return value
+            with NETCDF_LOCK:
+                with xr.open_dataset(path, engine="netcdf4") as ds:
+                    name = next((v for v in ds.data_vars if v in ("wmb", "dpth") or "bathy" in v.lower()), None)
+                    if name is None:
+                        continue
+                    data = ds[name]
+                    extra = [d for d in data.dims if d not in ("latitude", "longitude")]
+                    if extra:
+                        data = data.isel({d: 0 for d in extra})
+                    value = float(data.isel(latitude=cell_index(ds, cell)[0],
+                                            longitude=cell_index(ds, cell)[1]).values)
+                    if np.isfinite(value) and value > 0:
+                        return value
     return None
 
 
@@ -227,22 +229,23 @@ def collect(files: list[Path], latitude: float, longitude: float) -> dict:
 
     with tempfile.TemporaryDirectory(prefix="era5-analysis-") as temp_name:
         for path in netcdf_paths(files, Path(temp_name)):
-            with xr.open_dataset(path, engine="netcdf4") as ds:
-                names = [v for v in ds.data_vars if {"latitude", "longitude"} <= set(ds[v].dims)]
-                if not names:
-                    continue
-                # The grid is a property of the file (wave stream vs oper stream), not of one variable.
-                kind = "wave" if "swh" in names or any(v in WAVE_NAMES for v in names) else "atmos"
-                if kind not in cells:
-                    lead = "swh" if "swh" in names else names[0]
-                    i, j, was_moved = pick_cell(ds, lead, latitude, longitude)
-                    moved = moved or was_moved
-                    cells[kind] = cell_coordinate(ds, (i, j))
-                for name in names:
-                    attrs.setdefault(name, (ds[name].attrs.get("long_name", name),
-                                            ds[name].attrs.get("units", "")))
-                for name, values in extract_point(ds, names, cell_index(ds, cells[kind])).items():
-                    series.setdefault(name, []).append(values)
+            with NETCDF_LOCK:
+                with xr.open_dataset(path, engine="netcdf4") as ds:
+                    names = [v for v in ds.data_vars if {"latitude", "longitude"} <= set(ds[v].dims)]
+                    if not names:
+                        continue
+                    # The grid is a property of the file (wave stream vs oper stream), not of one variable.
+                    kind = "wave" if "swh" in names or any(v in WAVE_NAMES for v in names) else "atmos"
+                    if kind not in cells:
+                        lead = "swh" if "swh" in names else names[0]
+                        i, j, was_moved = pick_cell(ds, lead, latitude, longitude)
+                        moved = moved or was_moved
+                        cells[kind] = cell_coordinate(ds, (i, j))
+                    for name in names:
+                        attrs.setdefault(name, (ds[name].attrs.get("long_name", name),
+                                                ds[name].attrs.get("units", "")))
+                    for name, values in extract_point(ds, names, cell_index(ds, cells[kind])).items():
+                        series.setdefault(name, []).append(values)
 
     if not series:
         raise ValueError("No gridded variables were found in the downloaded files")
@@ -755,63 +758,64 @@ def analyse_spectra(files: list[Path], latitude: float, longitude: float,
 
     with tempfile.TemporaryDirectory(prefix="era5-analysis-") as temp_name:
         for path in netcdf_paths(data_files, Path(temp_name)):
-            with xr.open_dataset(path, engine="netcdf4") as ds:
-                found = spectra_variable(ds)
-                if found is None:
-                    continue
-                variable, dir_dim, freq_dim = found
-                if ds.sizes[dir_dim] != len(dir_to) or ds.sizes[freq_dim] != len(freqs):
-                    raise ValueError(
-                        f"Unexpected spectral grid {ds.sizes[dir_dim]} directions × {ds.sizes[freq_dim]} "
-                        f"frequencies; this reader assumes the ERA5 24 × 30 grid")
-                if cell_coord is None:
-                    i, j, moved = pick_cell(ds, variable, *(node or (latitude, longitude)), first_step_only=True)
-                    cell_coord = cell_coordinate(ds, (i, j))
-                    depth = read_depth(bathymetry, cell_coord)
-                lat_i, lon_j = cell_index(ds, cell_coord)
-                time_name = time_name_of(ds)
-                point = ds[variable].isel(latitude=lat_i, longitude=lon_j)
-                if "expver" in point.dims:
-                    point = point.mean("expver", skipna=True)
-                point = point.transpose(time_name, dir_dim, freq_dim)
-                raw = np.asarray(point.values, dtype=float)
-                index = pd.to_datetime(np.atleast_1d(point[time_name].values))
+            with NETCDF_LOCK:
+                with xr.open_dataset(path, engine="netcdf4") as ds:
+                    found = spectra_variable(ds)
+                    if found is None:
+                        continue
+                    variable, dir_dim, freq_dim = found
+                    if ds.sizes[dir_dim] != len(dir_to) or ds.sizes[freq_dim] != len(freqs):
+                        raise ValueError(
+                            f"Unexpected spectral grid {ds.sizes[dir_dim]} directions × {ds.sizes[freq_dim]} "
+                            f"frequencies; this reader assumes the ERA5 24 × 30 grid")
+                    if cell_coord is None:
+                        i, j, moved = pick_cell(ds, variable, *(node or (latitude, longitude)), first_step_only=True)
+                        cell_coord = cell_coordinate(ds, (i, j))
+                        depth = read_depth(bathymetry, cell_coord)
+                    lat_i, lon_j = cell_index(ds, cell_coord)
+                    time_name = time_name_of(ds)
+                    point = ds[variable].isel(latitude=lat_i, longitude=lon_j)
+                    if "expver" in point.dims:
+                        point = point.mean("expver", skipna=True)
+                    point = point.transpose(time_name, dir_dim, freq_dim)
+                    raw = np.asarray(point.values, dtype=float)
+                    index = pd.to_datetime(np.atleast_1d(point[time_name].values))
 
-                present = raw[np.isfinite(raw)]
-                if present.size:
-                    min_density = min(min_density, float(10.0 ** present.min()))
-                missing_share.append(float(np.isnan(raw).mean()))
-                density = wc.decode_log10(raw)
-                bulk = wc.spectral_bulk(density, freqs, dfreq, dtheta, dir_to, depth)
+            present = raw[np.isfinite(raw)]
+            if present.size:
+                min_density = min(min_density, float(10.0 ** present.min()))
+            missing_share.append(float(np.isnan(raw).mean()))
+            density = wc.decode_log10(raw)
+            bulk = wc.spectral_bulk(density, freqs, dfreq, dtheta, dir_to, depth)
 
-                e_f = density.sum(axis=1) * dtheta
-                stride = max(1, -(-len(index) // MAX_GAMMA_STEPS))
-                gamma = np.full(len(index), np.nan)
-                gamma[::stride] = wc.fit_gamma(e_f[::stride], freqs, bulk["tp_parabolic"][::stride] ** -1)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    te_tp = bulk["te"] / bulk["tp_parabolic"]
+            e_f = density.sum(axis=1) * dtheta
+            stride = max(1, -(-len(index) // MAX_GAMMA_STEPS))
+            gamma = np.full(len(index), np.nan)
+            gamma[::stride] = wc.fit_gamma(e_f[::stride], freqs, bulk["tp_parabolic"][::stride] ** -1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                te_tp = bulk["te"] / bulk["tp_parabolic"]
 
-                columns = {k: v for k, v in bulk.items()
-                           if k not in ("flux_dir", "flux_f", "m0")}
-                columns.update({"te_tp": te_tp, "gamma": gamma, "m0": bulk["m0"]})
-                for d in range(len(dir_to)):
-                    columns[f"flux_dir_{d:02d}"] = bulk["flux_dir"][:, d]
-                frames.append(pd.DataFrame(columns, index=index))
+            columns = {k: v for k, v in bulk.items()
+                       if k not in ("flux_dir", "flux_f", "m0")}
+            columns.update({"te_tp": te_tp, "gamma": gamma, "m0": bulk["m0"]})
+            for d in range(len(dir_to)):
+                columns[f"flux_dir_{d:02d}"] = bulk["flux_dir"][:, d]
+            frames.append(pd.DataFrame(columns, index=index))
 
-                good = np.isfinite(bulk["flux"])
-                flux_f_sum += np.nansum(bulk["flux_f"][good], axis=0)
-                flux_f_count += int(good.sum())
+            good = np.isfinite(bulk["flux"])
+            flux_f_sum += np.nansum(bulk["flux_f"][good], axis=0)
+            flux_f_count += int(good.sum())
 
-                if partition:
-                    time_stride = max(1, -(-len(index) // MAX_PARTITION_STEPS))
-                    sel = slice(None, None, time_stride)
-                    parts = partition_spectra(density[sel], freqs, dfreq, dtheta, dir_to, depth)
-                    if parts is not None:
-                        partition_total.append(bulk["m0"][sel])
-                        for p, bulk_p in enumerate(parts):
-                            store = partition_parts.setdefault(p, {})
-                            for key in ("hm0", "tp_parabolic", "te", "dm_from", "flux", "m0"):
-                                store.setdefault(key, []).append(bulk_p[key])
+            if partition:
+                time_stride = max(1, -(-len(index) // MAX_PARTITION_STEPS))
+                sel = slice(None, None, time_stride)
+                parts = partition_spectra(density[sel], freqs, dfreq, dtheta, dir_to, depth)
+                if parts is not None:
+                    partition_total.append(bulk["m0"][sel])
+                    for p, bulk_p in enumerate(parts):
+                        store = partition_parts.setdefault(p, {})
+                        for key in ("hm0", "tp_parabolic", "te", "dm_from", "flux", "m0"):
+                            store.setdefault(key, []).append(bulk_p[key])
 
     if not frames:
         raise ValueError("No 2D wave-spectra variable was found in the downloaded files")
@@ -1008,15 +1012,16 @@ def read_depth_grid(bathymetry_files: list[Path]):
         return None
     with tempfile.TemporaryDirectory(prefix="era5-depth-") as temp_name:
         for path in netcdf_paths(bathymetry_files, Path(temp_name)):
-            with xr.open_dataset(path, engine="netcdf4") as ds:
-                name = next((v for v in ds.data_vars if v in ("wmb", "dpth") or "bathy" in v.lower()), None)
-                if name is None:
-                    continue
-                data = ds[name]
-                extra = [d for d in data.dims if d not in ("latitude", "longitude")]
-                if extra:
-                    data = data.isel({d: 0 for d in extra})
-                return data.load()
+            with NETCDF_LOCK:
+                with xr.open_dataset(path, engine="netcdf4") as ds:
+                    name = next((v for v in ds.data_vars if v in ("wmb", "dpth") or "bathy" in v.lower()), None)
+                    if name is None:
+                        continue
+                    data = ds[name]
+                    extra = [d for d in data.dims if d not in ("latitude", "longitude")]
+                    if extra:
+                        data = data.isel({d: 0 for d in extra})
+                    return data.load()
     return None
 
 
@@ -1052,11 +1057,12 @@ def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> 
     # First find lats and lons
     lats = lons = None
     for path in paths:
-        with xr.open_dataset(path, engine="netcdf4") as ds:
-            if spectra_variable(ds):
-                lats = ds["latitude"].values
-                lons = ds["longitude"].values
-                break
+        with NETCDF_LOCK:
+            with xr.open_dataset(path, engine="netcdf4") as ds:
+                if spectra_variable(ds):
+                    lats = ds["latitude"].values
+                    lons = ds["longitude"].values
+                    break
 
     if lats is None:
         return SpectraNodes({}, np.array([]), None, None, None)
@@ -1069,39 +1075,40 @@ def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> 
     all_months = []
 
     for path in paths:
-        with xr.open_dataset(path, engine="netcdf4") as ds:
-            found = spectra_variable(ds)
-            if found is None:
-                continue
-            variable, dir_dim, freq_dim = found
-            time_name = time_name_of(ds)
+        with NETCDF_LOCK:
+            with xr.open_dataset(path, engine="netcdf4") as ds:
+                found = spectra_variable(ds)
+                if found is None:
+                    continue
+                variable, dir_dim, freq_dim = found
+                time_name = time_name_of(ds)
 
-            raw_full = ds[variable].isel({time_name: slice(None, None, stride)})
-            if "expver" in raw_full.dims:
-                raw_full = raw_full.mean("expver", skipna=True)
+                raw_full = ds[variable].isel({time_name: slice(None, None, stride)})
+                if "expver" in raw_full.dims:
+                    raw_full = raw_full.mean("expver", skipna=True)
 
-            n_strided = raw_full.sizes[time_name]
-            times = pd.DatetimeIndex(ds[time_name].values[::stride])
-            all_months.append(times.month.to_numpy())
+                n_strided = raw_full.sizes[time_name]
+                times = pd.DatetimeIndex(ds[time_name].values[::stride])
+                all_months.append(times.month.to_numpy())
 
-            for start in range(0, n_strided, CHUNK_SIZE):
-                end = min(start + CHUNK_SIZE, n_strided)
-                chunk = raw_full.isel({time_name: slice(start, end)})
-                chunk = chunk.transpose(time_name, dir_dim, freq_dim, "latitude", "longitude").values.astype(float)
+                for start in range(0, n_strided, CHUNK_SIZE):
+                    end = min(start + CHUNK_SIZE, n_strided)
+                    chunk = raw_full.isel({time_name: slice(start, end)})
+                    chunk = chunk.transpose(time_name, dir_dim, freq_dim, "latitude", "longitude").values.astype(float)
 
-                for i, lat in enumerate(lats):
-                    for j, lon in enumerate(lons):
-                        column = chunk[:, :, :, i, j]
-                        if not np.isfinite(column).any():
-                            nans = np.full(end - start, np.nan)
+                    for i, lat in enumerate(lats):
+                        for j, lon in enumerate(lons):
+                            column = chunk[:, :, :, i, j]
+                            if not np.isfinite(column).any():
+                                nans = np.full(end - start, np.nan)
+                                for name in ("hm0", "te", "flux"):
+                                    node_lists[(i, j)][name].append(nans)
+                                continue
+
+                            depth = _depth_lookup(depth_grid, lat, lon)
+                            bulk = wc.spectral_bulk(wc.decode_log10(column), freqs, dfreq, dtheta, dir_to, depth)
                             for name in ("hm0", "te", "flux"):
-                                node_lists[(i, j)][name].append(nans)
-                            continue
-
-                        depth = _depth_lookup(depth_grid, lat, lon)
-                        bulk = wc.spectral_bulk(wc.decode_log10(column), freqs, dfreq, dtheta, dir_to, depth)
-                        for name in ("hm0", "te", "flux"):
-                            node_lists[(i, j)][name].append(bulk[name])
+                                node_lists[(i, j)][name].append(bulk[name])
 
     months = np.concatenate(all_months) if all_months else np.array([])
     node_data = {
@@ -1142,9 +1149,10 @@ def node_summary(files: list[Path], product: str, latitude: float, longitude: fl
         if product == "wave-spectra":
             lengths = []
             for path in paths:
-                with xr.open_dataset(path, engine="netcdf4") as ds:
-                    found = spectra_variable(ds)
-                    lengths.append(ds.sizes[time_name_of(ds)] if found else 0)
+                with NETCDF_LOCK:
+                    with xr.open_dataset(path, engine="netcdf4") as ds:
+                        found = spectra_variable(ds)
+                        lengths.append(ds.sizes[time_name_of(ds)] if found else 0)
             total_records = sum(lengths)
 
             if total_records > 0:
@@ -1169,45 +1177,46 @@ def node_summary(files: list[Path], product: str, latitude: float, longitude: fl
         else:
             generic_done = False
             for path in paths:
-                with xr.open_dataset(path, engine="netcdf4") as ds:
-                    names = [v for v in ds.data_vars if {"latitude", "longitude"} <= set(ds[v].dims)]
-                    if not names:
-                        continue
-                    wave = "swh" in names
-                    if not wave and (generic_done or "hm0" in sums):
-                        continue
-                    if "expver" in ds.dims:
-                        ds = ds.mean("expver", skipna=True)
-                    time_name = time_name_of(ds)
+                with NETCDF_LOCK:
+                    with xr.open_dataset(path, engine="netcdf4") as ds:
+                        names = [v for v in ds.data_vars if {"latitude", "longitude"} <= set(ds[v].dims)]
+                        if not names:
+                            continue
+                        wave = "swh" in names
+                        if not wave and (generic_done or "hm0" in sums):
+                            continue
+                        if "expver" in ds.dims:
+                            ds = ds.mean("expver", skipna=True)
+                        time_name = time_name_of(ds)
 
-                    def field(name, ds=ds, time_name=time_name):
-                        data = ds[name]
-                        extra = [d for d in data.dims if d not in (time_name, "latitude", "longitude")]
-                        if extra:
-                            data = data.isel({d: 0 for d in extra})
-                        return data.transpose(time_name, "latitude", "longitude").values.astype(float)
+                        def field(name, ds=ds, time_name=time_name):
+                            data = ds[name]
+                            extra = [d for d in data.dims if d not in (time_name, "latitude", "longitude")]
+                            if extra:
+                                data = data.isel({d: 0 for d in extra})
+                            return data.transpose(time_name, "latitude", "longitude").values.astype(float)
 
-                    if wave:
-                        lats, lons = ds["latitude"].values, ds["longitude"].values
-                        swh = field("swh")
-                        add("hm0", swh)
-                        if "mwp" in names:
-                            mwp = field("mwp")
-                            add("te", mwp)
-                            add("flux", wc.deep_water_flux(swh, mwp))
-                    elif "hm0" not in sums:
-                        kind = "generic"
-                        lats, lons = ds["latitude"].values, ds["longitude"].values
-                        lead = names[0]
-                        values = field(lead)
-                        if lead in OTHER_FIELDS:
-                            label, unit, convert = OTHER_FIELDS[lead]
-                            values, value_label = convert(values), f"{label} ({unit})"
-                        else:
-                            long_name = ds[lead].attrs.get("long_name", lead)
-                            value_label = f"{long_name} ({ds[lead].attrs.get('units', '')})"
-                        add("value", values)
-                        generic_done = True
+                        if wave:
+                            lats, lons = ds["latitude"].values, ds["longitude"].values
+                            swh = field("swh")
+                            add("hm0", swh)
+                            if "mwp" in names:
+                                mwp = field("mwp")
+                                add("te", mwp)
+                                add("flux", wc.deep_water_flux(swh, mwp))
+                        elif "hm0" not in sums:
+                            kind = "generic"
+                            lats, lons = ds["latitude"].values, ds["longitude"].values
+                            lead = names[0]
+                            values = field(lead)
+                            if lead in OTHER_FIELDS:
+                                label, unit, convert = OTHER_FIELDS[lead]
+                                values, value_label = convert(values), f"{label} ({unit})"
+                            else:
+                                long_name = ds[lead].attrs.get("long_name", lead)
+                                value_label = f"{long_name} ({ds[lead].attrs.get('units', '')})"
+                            add("value", values)
+                            generic_done = True
 
     if lats is None:
         raise ValueError("No gridded variables were found in the downloaded files")

@@ -13,6 +13,7 @@ import xarray as xr
 
 import analysis
 import wavecalc as wc
+from netcdf_safety import NETCDF_LOCK
 
 
 def _node_stats(hm0_arr, te_arr, flux_arr, months_arr):
@@ -92,12 +93,13 @@ def compute_screening(files: list[Path], product: str, latitude: float, longitud
         # 1. Get total record times
         timestamps = []
         for path in paths:
-            with xr.open_dataset(path, engine="netcdf4") as ds:
-                if product == "wave-spectra":
-                    found = analysis.spectra_variable(ds)
-                    if found is None:
-                        continue
-                timestamps.append(ds[analysis.time_name_of(ds)].values)
+            with NETCDF_LOCK:
+                with xr.open_dataset(path, engine="netcdf4") as ds:
+                    if product == "wave-spectra":
+                        found = analysis.spectra_variable(ds)
+                        if found is None:
+                            continue
+                    timestamps.append(ds[analysis.time_name_of(ds)].values)
         if not timestamps:
             raise ValueError("No valid gridded variables found in the downloaded files.")
 
@@ -173,14 +175,15 @@ def _compute_bulk(paths: list[Path], depth_grid, site_lat: float, site_lon: floa
     no_mwp = False
 
     for path in paths:
-        with xr.open_dataset(path, engine="netcdf4") as ds:
-            names = [v for v in ds.data_vars if {"latitude", "longitude"} <= set(ds[v].dims)]
-            if not names:
-                continue
-            if "swh" not in names:
-                continue
-            if "expver" in ds.dims:
-                ds = ds.mean("expver", skipna=True)
+        with NETCDF_LOCK:
+            with xr.open_dataset(path, engine="netcdf4") as ds:
+                names = [v for v in ds.data_vars if {"latitude", "longitude"} <= set(ds[v].dims)]
+                if not names:
+                    continue
+                if "swh" not in names:
+                    continue
+                if "expver" in ds.dims:
+                    ds = ds.mean("expver", skipna=True)
 
             time_name = analysis.time_name_of(ds)
             lats = ds["latitude"].values

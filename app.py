@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from flask import Flask, abort, jsonify, render_template, request, send_file, se
 
 import crosscheck
 import fetch_era5_waves
+from netcdf_safety import NETCDF_LOCK, atomic_publish, atomic_write_text
 import plugins
 from analysis import ANALYSIS_VERSION, analyse, find_node, node_summary, sector_section
 
@@ -232,37 +234,39 @@ def cached_analysis(directory: Path, files: list[Path], latitude: float, longitu
     The default analysis is the nearest ocean cell to the site; a chosen grid node is cached
     separately so that switching between nodes is instant the second time.
     """
-    tag = node_tag(node)
-    cache = directory / f"analysis{tag}.json"
-    series_file = directory / f"timeseries{tag}.csv"
-    newest = max(path.stat().st_mtime for path in files)
-    if cache.is_file() and series_file.is_file() and cache.stat().st_mtime >= newest:
-        try:
-            cached = json.loads(cache.read_text(encoding="utf-8"))
-            if cached.get("version") == ANALYSIS_VERSION:
-                return cached
-        except (OSError, ValueError):
-            pass
-    payload, frame = analyse(files, latitude, longitude, product, node)
-    frame.to_csv(series_file, index_label="time")
-    result = {"version": ANALYSIS_VERSION, "product": product, **payload}
-    cache.write_text(json.dumps(result), encoding="utf-8")
-    return result
+    with NETCDF_LOCK:
+        tag = node_tag(node)
+        cache = directory / f"analysis{tag}.json"
+        series_file = directory / f"timeseries{tag}.csv"
+        newest = max(path.stat().st_mtime for path in files)
+        if cache.is_file() and series_file.is_file() and cache.stat().st_mtime >= newest:
+            try:
+                cached = json.loads(cache.read_text(encoding="utf-8"))
+                if cached.get("version") == ANALYSIS_VERSION:
+                    return cached
+            except (OSError, ValueError):
+                pass
+        payload, frame = analyse(files, latitude, longitude, product, node)
+        atomic_publish(series_file, lambda temp_path: frame.to_csv(temp_path, index_label="time"))
+        result = {"version": ANALYSIS_VERSION, "product": product, **payload}
+        atomic_write_text(cache, json.dumps(result), encoding="utf-8")
+        return result
 
 
 def cached_nodes(directory: Path, files: list[Path], latitude: float, longitude: float, product: str) -> dict:
-    cache = directory / "nodes.json"
-    newest = max(path.stat().st_mtime for path in files)
-    if cache.is_file() and cache.stat().st_mtime >= newest:
-        try:
-            cached = json.loads(cache.read_text(encoding="utf-8"))
-            if cached.get("version") == ANALYSIS_VERSION:
-                return cached
-        except (OSError, ValueError):
-            pass
-    result = {"version": ANALYSIS_VERSION, **node_summary(files, product, latitude, longitude)}
-    cache.write_text(json.dumps(result), encoding="utf-8")
-    return result
+    with NETCDF_LOCK:
+        cache = directory / "nodes.json"
+        newest = max(path.stat().st_mtime for path in files)
+        if cache.is_file() and cache.stat().st_mtime >= newest:
+            try:
+                cached = json.loads(cache.read_text(encoding="utf-8"))
+                if cached.get("version") == ANALYSIS_VERSION:
+                    return cached
+            except (OSError, ValueError):
+                pass
+        result = {"version": ANALYSIS_VERSION, **node_summary(files, product, latitude, longitude)}
+        atomic_write_text(cache, json.dumps(result), encoding="utf-8")
+        return result
 
 
 def requested_node(job: dict, files: list[Path]) -> tuple[float, float] | None:
@@ -518,17 +522,30 @@ def get_analysis(job_id: str):
         return jsonify(error=str(exc)), 422
 
 
+def _read_bytes_safe(path: Path) -> bytes:
+    for attempt in range(50):
+        try:
+            return path.read_bytes()
+        except (PermissionError, FileNotFoundError):
+            if attempt == 49:
+                raise
+            time.sleep(0.005 * (attempt + 1))
+
+
 @app.get("/api/jobs/<job_id>/timeseries.csv")
 def get_timeseries(job_id: str):
     job = completed_job(job_id)
     files = data_files(job["directory"])
     try:
         node = requested_node(job, files)
-        cached_analysis(job["directory"], files, job["latitude"], job["longitude"], job["product"], node)
+        where = node_tag(node)
+        path = job["directory"] / f"timeseries{where}.csv"
+        with NETCDF_LOCK:
+            cached_analysis(job["directory"], files, job["latitude"], job["longitude"], job["product"], node)
+            data = _read_bytes_safe(path)
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
         return jsonify(error=str(exc)), 422
-    where = node_tag(node)
-    return send_file(job["directory"] / f"timeseries{where}.csv", mimetype="text/csv", as_attachment=True,
+    return send_file(io.BytesIO(data), mimetype="text/csv", as_attachment=True,
                      download_name=f"era5_{job['product']}_{job_id}{where}_timeseries.csv")
 
 
