@@ -16,6 +16,7 @@ EraExplorer.registerTab({
             const formContainer = EraExplorer.node('div', 'device-form');
 
             const errorDiv = EraExplorer.node('div', 'form-error');
+            errorDiv.setAttribute('role', 'alert');
             errorDiv.style.display = 'none';
             formContainer.appendChild(errorDiv);
 
@@ -200,6 +201,7 @@ EraExplorer.registerTab({
             }
 
             assessBtn.addEventListener('click', async () => {
+                if (assessBtn.disabled) return;
                 errorDiv.style.display = 'none';
 
                 const name = nameInput.value;
@@ -214,6 +216,8 @@ EraExplorer.registerTab({
                     return;
                 }
 
+                assessBtn.disabled = true;
+                assessBtn.setAttribute('aria-busy', 'true');
                 try {
                     const payload = {
                         name, rated_kw, width_m, period_type, bin_convention
@@ -232,6 +236,9 @@ EraExplorer.registerTab({
                     renderResult();
                 } catch (e) {
                     showError(e.message);
+                } finally {
+                    assessBtn.disabled = false;
+                    assessBtn.removeAttribute('aria-busy');
                 }
             });
 

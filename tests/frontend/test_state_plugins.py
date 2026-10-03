@@ -32,6 +32,17 @@ def click_recent(page, job_id):
     page.click(f".recent-item[href='#job={job_id}']")
 
 
+def wait_for_job_loaded(page, job_id):
+    """The job's own analysis and nodes are on screen (the header text alone can still be the previous job's)."""
+    page.wait_for_function("id => { const c = EraExplorer.context(); return c.jobId === id && c.analysis !== null && c.nodeData !== null; }",
+                           arg=job_id)
+
+
+def settle_heatmap(page):
+    """The heatmap redraws when its container is resized; give that time to finish before using the keyboard on it."""
+    page.wait_for_timeout(800)
+
+
 def open_picker(page):
     page.click("#tab-device")
     page.click("#device_catalogue")
@@ -59,8 +70,7 @@ def test_a_slow_screening_response_for_the_previous_job_does_not_overwrite_the_n
     page.wait_for_function("EraExplorer.context().nodeData !== null")
     page.click("#tab-screening")                             # job A's screening request takes 4 s
     click_recent(page, JOB_B)                                # a 48 h record ends on 2020-04-02
-    wait_for_analysis(page)
-    page.wait_for_function("EraExplorer.context().nodeData !== null && EraExplorer.context().jobId === '%s'" % JOB_B)
+    wait_for_job_loaded(page, JOB_B)
     page.click("#tab-screening")
     page.wait_for_function("document.querySelector('#panel-screening').textContent.includes('downloaded record')")
     page.wait_for_timeout(4500)                              # job A's answer has arrived by now
@@ -80,11 +90,10 @@ def test_compared_nodes_and_map_colours_do_not_survive_a_job_switch(page, live):
     assert page.locator("#panel-screening .compare-chip").count() == 2
     assert "Mean flux" in page.inner_text("#legend-label")                 # the Screening colouring is on the map
     click_recent(page, JOB_B)
-    wait_for_analysis(page)
-    page.wait_for_function("EraExplorer.context().nodeData !== null && EraExplorer.context().jobId === '%s'" % JOB_B)
+    wait_for_job_loaded(page, JOB_B)
     assert page.inner_text("#legend-label") == "Mean energy flux J (kW/m)"   # the built-in colouring again
     page.click("#tab-screening")
-    page.wait_for_selector("#panel-screening .compare-container")
+    page.wait_for_function("document.querySelector('#panel-screening').textContent.includes('2020-04-02')")   # job B's own panel
     assert page.locator("#panel-screening .compare-chip").count() == 0
 
 
@@ -141,11 +150,14 @@ def test_arrow_keys_on_a_newly_selected_device_do_not_use_the_previous_cursor(pa
     open_picker(page)
     page.click("li.device-picker-item[data-id='big']")
     page.wait_for_selector(".heatmap-svg[aria-label^='Big device']")
+    settle_heatmap(page)
     page.focus(".heatmap-svg")
     for key in ["ArrowRight"] + ["ArrowUp"] * 5 + ["ArrowRight"] * 5:      # the cursor ends on the top right cell
         page.keyboard.press(key)
+    assert page.inner_text(".heatmap-readout") != ""                       # the cursor really is on a cell
     page.click("li.device-picker-item[data-id='small']")                    # a 2 x 2 matrix: that cell does not exist
     page.wait_for_selector(".heatmap-svg[aria-label^='Small device']")
+    settle_heatmap(page)
     page.focus(".heatmap-svg")
     page.keyboard.press("ArrowDown")
     assert page.errors == []

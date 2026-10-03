@@ -363,6 +363,7 @@ function openJob(jobId) {
   lastAnalysis = null;
   lastSuccessfulNode = null;
   advancedDrawn = false;
+  nodeColours = null;
   clearNodes();
   history.replaceState(null, '', `#job=${jobId}`);
   statusCard.hidden = false;
