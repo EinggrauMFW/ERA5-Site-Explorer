@@ -122,7 +122,10 @@ code { font: .92em ui-monospace, "Cascadia Code", Consolas, monospace; backgroun
   backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 10px; font: 600 15px var(--sans); text-decoration: none; letter-spacing: -.01em; }
-.brand-mark { width: 18px; height: 18px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, var(--accent) 0 34%, var(--sea) 36%); box-shadow: 0 0 0 1px var(--line-strong); }
+/* The logo symbol is a mask, so one file takes the theme colour: deep green on light, lime on dark. */
+.brand-mark { flex: none; width: 26px; height: 26px; background: var(--ink); -webkit-mask: url("brand/era5-black.svg") center / contain no-repeat; mask: url("brand/era5-black.svg") center / contain no-repeat; }
+:root[data-theme="dark"] .brand-mark { background: var(--accent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brand-mark { background: var(--accent); } }
 .topnav { display: flex; gap: 4px; margin-left: auto; }
 .topnav a { padding: 6px 12px; border-radius: 999px; font-size: 13px; text-decoration: none; color: var(--muted); }
 .topnav a:hover { background: var(--surface-3); color: var(--ink); }
