@@ -12,8 +12,10 @@ publishing them is the user's decision). The folder holds:
   (list of periods in s) and `power_kw` (list of rows, one per `hs_m`, each row one value per `period_s`, with
   `null` for a cell that is undefined in the source).
 - `*.csv`: the same matrices in the CSV layout the Device tab already reads (first column Hm0 in m, header row
-  period in s, cells kW, empty cell = undefined). `corpower.csv` has a trailing comma on every line; the existing
-  `device.parse_power_matrix` already reads it.
+  period in s, cells kW, empty cell = undefined). All four read with the existing
+  `device.parse_power_matrix`, which also accepts rows that end in undefined (blank) cells. (An earlier version of
+  this spec wrongly said `corpower.csv` has trailing commas; that came from a truncated listing. A CSV that
+  really has a trailing separator is malformed and is skipped with a warning.)
 - `devices.yaml` and `README.md`: documentation. Do NOT read YAML (no new dependency). `devices.json` carries
   everything.
 
@@ -100,7 +102,7 @@ Offline, with a temporary `DEVICES_DIR` (monkeypatch the environment; do not rel
   not an object, non-increasing axis, ragged rows, negative cell, NaN or string cell, all cells undefined, bad
   id, bad `rated_kw`, invalid JSON file, oversized file;
 - duplicate ids; a JSON `file` field with a path (`../x.csv`) never opens anything; a stray CSV becomes a device
-  and a CSV named by a JSON entry does not become a second one; a CSV with a trailing comma loads;
+  and a CSV named by a JSON entry does not become a second one; a CSV whose rows end in undefined cells loads, and a malformed CSV is skipped with a warning naming the file;
 - the synthetic example is always present and flagged; an empty or missing folder gives only the example and
   `configured` reflects the environment variable;
 - the routes: list, detail (cells equal the file's, edges are the midpoint edges, `None` serialises as `null`),
