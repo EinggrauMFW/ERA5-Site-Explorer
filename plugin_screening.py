@@ -5,33 +5,35 @@ import json
 from flask import jsonify, send_file
 import plugins
 import screening
+from netcdf_safety import NETCDF_LOCK, atomic_write_text
 
 SCREENING_VERSION = 2
 
 def _load_or_compute(view):
-    cache_path = view.directory / "screening.json"
-    
-    mtime = 0
-    for f in view.files:
-        if f.is_file():
-            mtime = max(mtime, f.stat().st_mtime)
-            
-    if cache_path.is_file():
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            if cached.get("_version") == SCREENING_VERSION and cached.get("_mtime") >= mtime:
-                return {k: v for k, v in cached.items() if not k.startswith("_")}
-        except Exception:
-            pass
-            
-    result = screening.compute_screening(view.files, view.product, view.latitude, view.longitude)
-    
-    to_cache = dict(result)
-    to_cache["_version"] = SCREENING_VERSION
-    to_cache["_mtime"] = mtime
-    cache_path.write_text(json.dumps(to_cache, default=plugins._json_default), encoding="utf-8")
-    
-    return result
+    with NETCDF_LOCK:
+        cache_path = view.directory / "screening.json"
+        
+        mtime = 0
+        for f in view.files:
+            if f.is_file():
+                mtime = max(mtime, f.stat().st_mtime)
+                
+        if cache_path.is_file():
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                if cached.get("_version") == SCREENING_VERSION and cached.get("_mtime") >= mtime:
+                    return {k: v for k, v in cached.items() if not k.startswith("_")}
+            except Exception:
+                pass
+                
+        result = screening.compute_screening(view.files, view.product, view.latitude, view.longitude)
+        
+        to_cache = dict(result)
+        to_cache["_version"] = SCREENING_VERSION
+        to_cache["_mtime"] = mtime
+        atomic_write_text(cache_path, json.dumps(to_cache, default=plugins._json_default), encoding="utf-8")
+        
+        return result
 
 def register(app, ctx):
     """Register the screening API endpoints (JSON and CSV)."""

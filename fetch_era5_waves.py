@@ -28,14 +28,18 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import ctypes
 import datetime as dt
 import hashlib
 import json
 import logging
 import math
+import os
 import platform
 import re
 import sys
+import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -530,6 +534,78 @@ def setup_logging() -> None:
         logging.getLogger(name).addHandler(logging.NullHandler())
 
 
+# Known limit: PID reuse by an unrelated process is not detected.
+def pid_alive(pid: int) -> bool:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        kernel32 = getattr(ctypes, "windll", None) and getattr(ctypes.windll, "kernel32", None)
+        if kernel32 is None:
+            kernel32 = ctypes.WinDLL("kernel32")
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            err = kernel32.GetLastError() if hasattr(kernel32, "GetLastError") else (
+                ctypes.GetLastError() if hasattr(ctypes, "GetLastError") else None
+            )
+            return err == 5  # ERROR_ACCESS_DENIED
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == 259  # STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+
+
+def start_parent_watchdog(parent_pid: int) -> None:
+    def watchdog() -> None:
+        while True:
+            time.sleep(1.0)
+            if not pid_alive(parent_pid):
+                print("parent process ended; stopping", flush=True)
+                os._exit(3)
+
+    thread = threading.Thread(target=watchdog, daemon=True)
+    thread.start()
+
+
+def is_credentials_error(exc: Exception) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return True
+    msg = str(exc).lower()
+    if "missing/incomplete configuration file" in msg:
+        return True
+    if "missing url" in msg or "missing key" in msg:
+        return True
+    return False
+
+
+def is_unaccepted_licence_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    if "licen" not in msg:
+        return False
+    indicators = (
+        "must be accepted",
+        "not been accepted",
+        "not accepted",
+        "have not accepted",
+        "has not accepted",
+        "need to accept",
+        "needs to be accepted",
+    )
+    return any(ind in msg for ind in indicators)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--latitude", type=float, required=True)
@@ -552,6 +628,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--estimate", action="store_true",
                         help="ask CDS for the cost of the first request and exit (nothing is submitted); "
                              "CDS often answers HTTP 500 for MARS datasets, in which case use --probe")
+    parser.add_argument("--parent-pid", type=int, default=None,
+                        help="parent process id; fetcher exits if parent dies")
     return parser.parse_args(argv)
 
 
@@ -682,7 +760,14 @@ def main(argv: list[str] | None = None) -> int:
                   flush=True)
     write_provenance(args.output / "provenance.json", provenance)
     # retry_max bounds how long a persistent CDS 5xx can stall a job (the library default is 500 tries).
-    client = cdsapi.Client(progress=False, retry_max=30)
+    try:
+        client = cdsapi.Client(progress=False, retry_max=30)
+    except Exception as exc:
+        if is_credentials_error(exc):
+            print('error: CDS credentials were not found. Create ~/.cdsapirc as described in the '
+                  'README section "CDS API access", then run again.', flush=True)
+            return 2
+        raise
 
     if args.probe:
         year, month, days_ = chunks[0]
@@ -753,23 +838,29 @@ def main(argv: list[str] | None = None) -> int:
             record = retrieve(dataset, request, target, tag)
         except Exception as exc:  # cdsapi raises plain Exceptions for auth/licence/queue errors
             target.with_name(target.name + ".part").unlink(missing_ok=True)
-            if is_cost_error(exc):
-                if len(hours) > KNOWN_GOOD_HOURS:
-                    state["hours"] = max(KNOWN_GOOD_HOURS, len(hours) // 2)
-                    print(f"{tag}: CDS cost limit exceeded; using at most {state['hours']} time steps per "
-                          "request from now on", flush=True)
-                    return None
-                if len(days) > 1:
-                    state["cap_days"] = max(1, len(days) // 2)
-                    print(f"{tag}: CDS cost limit exceeded; using at most {state['cap_days']} day(s) per "
-                          "request from now on", flush=True)
-                    return None
-                print(f"error: CDS refused the smallest request ({tag}: 1 day, {len(hours)} time step(s)) "
-                      "as too costly, so splitting further cannot fix it. Something else in the request is "
-                      "too large: try a larger --time-step, a different --expver, or run --probe / "
-                      "--estimate to see what CDS accepts.", flush=True)
-            print(f"error: CDS request for {tag} failed: {exc}", flush=True)
-            record = {"dataset": dataset, "request": request, "file": target.name, "status": f"failed: {exc}"}
+            if is_unaccepted_licence_error(exc):
+                print('error: CDS says a licence has not been accepted for this dataset. Open the dataset '
+                      'page on the CDS website, accept its terms while logged in, then run again.', flush=True)
+                print(f"error: CDS request for {tag} failed: {exc}", flush=True)
+                record = {"dataset": dataset, "request": request, "file": target.name, "status": f"failed: {exc}"}
+            else:
+                if is_cost_error(exc):
+                    if len(hours) > KNOWN_GOOD_HOURS:
+                        state["hours"] = max(KNOWN_GOOD_HOURS, len(hours) // 2)
+                        print(f"{tag}: CDS cost limit exceeded; using at most {state['hours']} time steps per "
+                              "request from now on", flush=True)
+                        return None
+                    if len(days) > 1:
+                        state["cap_days"] = max(1, len(days) // 2)
+                        print(f"{tag}: CDS cost limit exceeded; using at most {state['cap_days']} day(s) per "
+                              "request from now on", flush=True)
+                        return None
+                    print(f"error: CDS refused the smallest request ({tag}: 1 day, {len(hours)} time step(s)) "
+                          "as too costly, so splitting further cannot fix it. Something else in the request is "
+                          "too large: try a larger --time-step, a different --expver, or run --probe / "
+                          "--estimate to see what CDS accepts.", flush=True)
+                print(f"error: CDS request for {tag} failed: {exc}", flush=True)
+                record = {"dataset": dataset, "request": request, "file": target.name, "status": f"failed: {exc}"}
         record["month"] = f"{year:04d}-{month:02d}"
         record["days"] = [days[0], days[-1]]
         record["hours"] = [hours[0], hours[-1]]
@@ -785,6 +876,8 @@ def main(argv: list[str] | None = None) -> int:
                                             "skipped": skipped_requests}), flush=True)
 
     print_progress([], chunks)
+    if args.parent_pid is not None:
+        start_parent_watchdog(args.parent_pid)
     failure = False
     for index, (year, month, days) in enumerate(chunks, start=1):
         label = f"[{index}/{len(chunks)}] {year:04d}-{month:02d}"

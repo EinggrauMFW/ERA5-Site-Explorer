@@ -37,6 +37,8 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from netcdf_safety import atomic_write_text
+
 LOG = logging.getLogger(__name__)
 HOURS_PER_YEAR = 8766.0
 PLUGIN_MODULES = ("plugin_device", "plugin_devices", "plugin_screening", "plugin_longterm", "plugin_export")
@@ -109,7 +111,7 @@ class JobView:
 
     def save_json(self, name: str, payload: Any) -> Path:
         path = self.results_path(name)
-        path.write_text(json.dumps(payload, indent=1, default=_json_default), encoding="utf-8")
+        atomic_write_text(path, json.dumps(payload, indent=1, default=_json_default), encoding="utf-8")
         return path
 
     def load_json(self, name: str, default: Any = None) -> Any:
@@ -121,7 +123,7 @@ class JobView:
         folder = self.directory / "report_sections"
         folder.mkdir(exist_ok=True)
         path = folder / f"{name}.md"
-        path.write_text(markdown, encoding="utf-8")
+        atomic_write_text(path, markdown, encoding="utf-8")
         return path
 
     def report_sections(self) -> list[tuple[str, str]]:
