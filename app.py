@@ -191,6 +191,9 @@ def save_job(job: dict) -> None:
     temporary.replace(target)
 
 
+pid_alive = fetch_era5_waves.pid_alive  # one implementation, shared with the fetcher's parent watchdog
+
+
 def load_jobs(mark_interrupted: bool = False) -> None:
     """Rebuild the job list from disk; jobs cut off by a restart become failed if mark_interrupted=True."""
     for folder in DOWNLOADS.iterdir():
@@ -213,7 +216,12 @@ def load_jobs(mark_interrupted: bool = False) -> None:
         job["directory"] = folder
         if mark_interrupted and job.get("status") in ("queued", "running"):
             job["status"] = "failed"
-            job["log"].append("Interrupted by an app restart. Resume continues it.")
+            pid = job.get("pid")
+            if pid is not None and pid_alive(pid):
+                job["log"].append(f"The fetcher from the earlier run (pid {pid}) is still running; "
+                                  "Resume is blocked until it exits.")
+            else:
+                job["log"].append("Interrupted by an app restart. Resume continues it.")
             save_job(job)
         jobs[job["id"]] = job
 
@@ -262,12 +270,24 @@ def progress_update(state: dict | None, line: str, now: float) -> tuple[dict | N
 
 
 def run_job(job_id: str, command: list[str]) -> None:
+    seen_save_errors: set[tuple[type, str]] = set()
+
+    def try_save(job_record: dict) -> None:
+        try:
+            save_job(job_record)
+        except OSError as exc:
+            key = (type(exc), str(exc))
+            if key not in seen_save_errors:
+                seen_save_errors.add(key)
+                logging.warning("Unable to save job %s: %s", job_id, exc)
+
     with jobs_lock:
-        job = jobs[job_id]
-        if job["status"] != "queued":  # cancelled or deleted while waiting
+        job = jobs.get(job_id)
+        if job is None or job["status"] != "queued":  # cancelled or deleted while waiting
             return
+        captured_run = job.get("run", 1)
         job["status"] = "running"
-        save_job(job)
+        try_save(job)
     try:
         process = subprocess.Popen(
             command,
@@ -282,12 +302,22 @@ def run_job(job_id: str, command: list[str]) -> None:
         )
     except OSError as exc:
         with jobs_lock:
-            append_log(jobs[job_id], f"Unable to start fetcher: {exc}")
-        set_status(job_id, "failed")
+            current_job = jobs.get(job_id)
+            is_current = bool(current_job) and current_job.get("run") == captured_run
+            if is_current:
+                append_log(current_job, f"Unable to start fetcher: {exc}")
+        if is_current:
+            set_status(job_id, "failed")
         return
     with jobs_lock:
-        processes[job_id] = process
-        if jobs[job_id]["status"] == "cancelled":  # cancelled while the process was starting
+        current_job = jobs.get(job_id)
+        if current_job and current_job.get("run") == captured_run:
+            processes[job_id] = process
+            current_job["pid"] = process.pid
+            try_save(current_job)
+            if current_job.get("status") == "cancelled":  # cancelled while the process was starting
+                process.terminate()
+        else:  # a newer run (or a delete) took over while this process was starting: do not leave it running
             process.terminate()
     try:
         assert process.stdout is not None
@@ -295,22 +325,29 @@ def run_job(job_id: str, command: list[str]) -> None:
         for line in process.stdout:
             prog_state, log_line = progress_update(prog_state, line, time.monotonic())
             with jobs_lock:
-                if prog_state:
-                    jobs[job_id]["progress"] = {
-                        k: v for k, v in prog_state.items()
-                        if k in ("done", "total", "skipped", "eta_seconds")
-                    }
-                if log_line is not None:
-                    append_log(jobs[job_id], log_line)
-                save_job(jobs[job_id])
+                current_job = jobs.get(job_id)
+                if current_job and current_job.get("run") == captured_run:
+                    if prog_state:
+                        current_job["progress"] = {
+                            k: v for k, v in prog_state.items()
+                            if k in ("done", "total", "skipped", "eta_seconds")
+                        }
+                    if log_line is not None:
+                        append_log(current_job, log_line)
+                    try_save(current_job)
         return_code = process.wait()
     finally:
         with jobs_lock:
-            processes.pop(job_id, None)
+            if processes.get(job_id) is process:
+                processes.pop(job_id, None)
     with jobs_lock:
-        cancelled = jobs[job_id]["status"] == "cancelled"
-    if not cancelled:
-        set_status(job_id, "complete" if return_code == 0 else "failed", return_code=return_code)
+        current_job = jobs.get(job_id)
+        if current_job and current_job.get("run") == captured_run:
+            current_job.pop("pid", None)
+            if current_job["status"] != "cancelled":
+                current_job["status"] = "complete" if return_code == 0 else "failed"
+                current_job["return_code"] = return_code
+            try_save(current_job)
 
 
 def public_job(job_id: str) -> dict:
@@ -475,6 +512,7 @@ def build_command(job: dict) -> list[str]:
         "--output", str(job["directory"]),
         "--product", job["product"],
         "--time-step", str(job.get("time_step") or fetch_era5_waves.DEFAULT_TIME_STEP[job["product"]]),
+        "--parent-pid", str(os.getpid()),
     ]
     if job["product"] != "single-levels":
         command += ["--expver", str(job.get("expver", "auto"))]
@@ -543,6 +581,7 @@ def create_job():
         job = jobs[job_id] = {
             "id": job_id,
             "status": "queued",
+            "run": 1,
             "log": [],
             "return_code": None,
             "directory": output,
@@ -601,8 +640,14 @@ def resume_job(job_id: str):
         if is_preview(job):
             return jsonify(error="Cannot resume a preview job"), 409
 
+        pid = job.get("pid")
+        if pid is not None and pid_alive(pid):
+            return jsonify(error=f"A fetcher for this job (pid {pid}) is still running. Wait for it to finish or stop it."), 409
+
+        job["run"] = job.get("run", 0) + 1
         job["status"] = "queued"
         job["return_code"] = None
+        job.pop("pid", None)
         job.pop("progress", None)
         append_log(job, "Resumed: files already on disk are kept.")
         save_job(job)

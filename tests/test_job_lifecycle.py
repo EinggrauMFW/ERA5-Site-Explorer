@@ -459,6 +459,39 @@ def test_cancelled_current_generation_stays_cancelled_and_removes_exited_pid(cli
     assert "pid" not in job and "pid" not in disk_job(job)
 
 
+def cancel_and_resume_during_start(client, job):
+    assert client.post(f"/api/jobs/{job['id']}/cancel").status_code == 200
+    assert client.post(f"/api/jobs/{job['id']}/resume").status_code == 202
+    assert job["run"] == 2 and job["status"] == "queued"
+
+
+def test_run_replaced_while_its_process_is_starting_does_not_write_pid_and_stops_the_process(client, monkeypatch):
+    job = job_record()
+    process = FakeProcess()
+
+    def slow_start(*args, **kwargs):
+        cancel_and_resume_during_start(client, job)
+        return process
+
+    monkeypatch.setattr(appmodule.subprocess, "Popen", slow_start)
+    appmodule.run_job(job["id"], [sys.executable, "-c", "pass"])
+    assert process.terminated, "A superseded run must not leave its fetcher running"
+    assert "pid" not in job and "pid" not in disk_job(job)
+    assert job["status"] == "queued" and job["return_code"] is None and job["run"] == 2
+
+
+def test_run_replaced_while_its_process_fails_to_start_does_not_fail_the_new_run(client, monkeypatch):
+    job = job_record()
+
+    def failing_start(*args, **kwargs):
+        cancel_and_resume_during_start(client, job)
+        raise OSError("cannot start")
+
+    monkeypatch.setattr(appmodule.subprocess, "Popen", failing_start)
+    appmodule.run_job(job["id"], [sys.executable, "-c", "pass"])
+    assert job["status"] == "queued" and not any("Unable to start" in line for line in job["log"])
+
+
 def test_queued_cancellation_still_prevents_child_start(client, monkeypatch):
     job = job_record()
     assert client.post(f"/api/jobs/{job['id']}/cancel").status_code == 200
