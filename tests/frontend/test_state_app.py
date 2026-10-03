@@ -23,6 +23,11 @@ def click_recent(page, job_id):
     page.click(f".recent-item[href='#job={job_id}']")
 
 
+def node_reset_hidden(page):
+    """The button's own `hidden` state. It sits in the Grid nodes tab, so it is not 'visible' while another tab shows."""
+    return page.evaluate("document.querySelector('#node-reset').hidden")
+
+
 # --- I1: a failed analysis does not leave the page half-updated -----------------------------------------
 
 def test_a_failed_node_analysis_clears_the_skeleton_and_restores_the_previous_node(page, live, monkeypatch):
@@ -33,7 +38,7 @@ def test_a_failed_node_analysis_clears_the_skeleton_and_restores_the_previous_no
     page.wait_for_function("document.querySelector('#analysis-meta').textContent.includes('Analysis unavailable')")
     assert page.locator("#metrics .skeleton").count() == 0                       # no placeholders left shimmering
     assert page.evaluate("EraExplorer.context().node") is None                   # the nearest ocean cell is still in use
-    assert page.locator("#node-reset").is_hidden()
+    assert node_reset_hidden(page) is True
     assert page.errors == []
 
 
@@ -46,7 +51,7 @@ def test_a_failed_node_analysis_keeps_the_last_chosen_node_and_its_way_back(page
     select_node(page, NODE_FAST)
     page.wait_for_function("document.querySelector('#analysis-meta').textContent.includes('Analysis unavailable')")
     assert page.evaluate("EraExplorer.context().node") == {"lat": 1.0, "lon": 96.0}
-    assert page.locator("#node-reset").is_visible()                              # the way back to the nearest cell
+    assert node_reset_hidden(page) is False                                      # the way back to the nearest cell
 
 
 # --- I2: overlapping node loads: the last request wins --------------------------------------------------
