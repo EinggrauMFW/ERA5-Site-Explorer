@@ -39,7 +39,7 @@ import pandas as pd
 
 LOG = logging.getLogger(__name__)
 HOURS_PER_YEAR = 8766.0
-PLUGIN_MODULES = ("plugin_device", "plugin_screening", "plugin_longterm", "plugin_export")
+PLUGIN_MODULES = ("plugin_device", "plugin_devices", "plugin_screening", "plugin_longterm", "plugin_export")
 
 CANONICAL_COLUMNS = ("hm0", "te", "tp", "dir_from", "flux")
 _BULK_MAP = {"hm0": "swh", "te": "mwp", "tp": "pp1d", "dir_from": "mwd", "flux": "j"}
