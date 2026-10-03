@@ -103,6 +103,8 @@ EraExplorer.registerTab({
                             assessBtn.click();
                         }
                     });
+                } else {
+                    showError('The device picker did not load. The server is probably running an older version of the app: restart it.');
                 }
             });
 
