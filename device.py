@@ -152,6 +152,36 @@ def parse_power_matrix(csv_text: str, bin_convention: str = "centres") -> PowerM
     return PowerMatrix(hm0_edges, period_edges, power_kw, hm0_centres, period_centres)
 
 
+def power_matrix_from_arrays(hm0_values, period_values, power_rows, bin_convention="centres") -> PowerMatrix:
+    raw_hm0 = np.array(hm0_values, dtype=float)
+    raw_periods = np.array(period_values, dtype=float)
+    power_kw = np.array(power_rows, dtype=float)
+
+    if len(raw_hm0) < 2:
+        raise ValueError("Need at least 2 wave heights.")
+    if len(raw_hm0) > 200:
+        raise ValueError("At most 200 wave heights allowed.")
+    if len(raw_periods) < 2:
+        raise ValueError("Need at least 2 periods.")
+    if len(raw_periods) > 200:
+        raise ValueError("At most 200 periods allowed.")
+
+    if not np.all(np.diff(raw_periods) > 0):
+        raise ValueError("Periods must be strictly increasing.")
+    if not np.all(np.diff(raw_hm0) > 0):
+        raise ValueError("Wave heights must be strictly increasing.")
+
+    if power_kw.shape != (len(raw_hm0), len(raw_periods)):
+        raise ValueError(f"power_rows must have shape ({len(raw_hm0)}, {len(raw_periods)}).")
+
+    hm0_edges = _make_edges(raw_hm0, bin_convention)
+    period_edges = _make_edges(raw_periods, bin_convention)
+    hm0_centres = _make_centres(raw_hm0, bin_convention)
+    period_centres = _make_centres(raw_periods, bin_convention)
+
+    return PowerMatrix(hm0_edges, period_edges, power_kw, hm0_centres, period_centres)
+
+
 def lookup_power(matrix: PowerMatrix, hm0: np.ndarray, period: np.ndarray, method: str) -> tuple[np.ndarray, np.ndarray]:
     """Looks up power for wave states, returning (power_kw, inside_mask)."""
     hm0 = np.asarray(hm0, dtype=float)
