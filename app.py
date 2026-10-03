@@ -314,16 +314,20 @@ def data_files(directory: Path) -> list[Path]:
 
 # --- routes ----------------------------------------------------------------------
 
+def plugin_assets(extension: str) -> list[str]:
+    """Names of the plugins that ship a script or stylesheet, in the order the plugins register."""
+    names = (module.removeprefix("plugin_") for module in plugins.PLUGIN_MODULES)
+    return [name for name in names if (APP_DIR / "static" / "plugins" / f"{name}.{extension}").is_file()]
+
+
 @app.get("/")
 def index():
     return render_template(
         "index.html",
         latest_date=fetch_era5_waves.latest_available().isoformat(),
         earliest_date=fetch_era5_waves.EARLIEST.isoformat(),
-        plugin_scripts=[name for name in ("device", "screening", "longterm", "export")
-                        if (APP_DIR / "static" / "plugins" / f"{name}.js").is_file()],
-        plugin_styles=[name for name in ("device", "screening", "longterm", "export")
-                       if (APP_DIR / "static" / "plugins" / f"{name}.css").is_file()],
+        plugin_scripts=plugin_assets("js"),
+        plugin_styles=plugin_assets("css"),
         products=fetch_era5_waves.PRODUCTS,
         groups=fetch_era5_waves.VARIABLE_GROUPS,
         group_labels=fetch_era5_waves.GROUP_LABELS,

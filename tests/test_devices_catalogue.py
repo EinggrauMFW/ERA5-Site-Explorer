@@ -308,3 +308,11 @@ def test_assess_with_device_id_and_convention(client, tmp_path, monkeypatch):
     aep2 = r2.get_json()["indexings"]["te"]["bin"]["aep_mwh"]
 
     assert aep1 == aep2
+
+
+def test_the_page_loads_the_script_and_style_of_every_plugin_that_has_them(client):
+    html = client.get("/").get_data(as_text=True)
+    for name in ("device", "devices", "screening", "longterm", "export"):
+        assert f"plugins/{name}.js" in html, name
+    for name in ("device", "devices", "screening", "longterm"):
+        assert f"plugins/{name}.css" in html, name
