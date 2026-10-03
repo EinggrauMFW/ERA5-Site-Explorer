@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest>=8
 wavespectra>=4.9  # optional: partitioning and the wavespectra cross-check tests
+playwright>=1.49  # optional: browser tests in tests/frontend; also run `python -m playwright install chromium`
