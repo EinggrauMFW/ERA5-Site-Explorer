@@ -551,6 +551,13 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
             "The event rate uses the observed time, not the calendar span."
         )
 
+    if step_hours is not None and step_hours > 1.0:
+        warnings.append(
+            f"Hm0 is sampled every {step_hours:g} h: storm peaks between samples are missed, "
+            "so extreme levels may be biased low. The size of the bias was shown on synthetic data only, "
+            "not on real ERA5."
+        )
+
     # Step 6: return levels
     return_years_list = [float(t) for t in return_years]
     levels = []
@@ -590,6 +597,16 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
             warnings.append(f"Bootstrap: {bootstrap_failures} of {bootstrap} replicates failed to fit "
                             f"({100 * bootstrap_failures / bootstrap:.1f}%).")
 
+    rate_out = _round3(lam)
+    note_rate = rate_out if rate_out > 0 else lam
+    for entry in levels:
+        T = entry["return_period_yr"]
+        if lam * T < 1.0:
+            entry["level_m"] = None
+            entry["ci_low_m"] = None
+            entry["ci_high_m"] = None
+            entry["note"] = f"shorter than the mean time between events (1 / rate = {1 / note_rate:.2f} yr)"
+
     # Step 8: threshold sensitivity
     sensitivity = []
     max_return = max(return_years_list)
@@ -597,7 +614,7 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
         u_s = float(np.percentile(hm0_finite, pct))
         pt_s, pv_s = _decluster(times[finite_mask], hm0_finite, u_s, decluster_hours)
         n_s = len(pv_s)
-        if n_s < 2:
+        if n_s < min_exceedances:
             sensitivity.append({"percentile": pct, "threshold_m": _round3(u_s), "n_peaks": n_s,
                                 "xi": None, "sigma": None, "level_m": None})
             continue
@@ -728,8 +745,11 @@ def report_markdown(result: dict) -> str:
         lines.append("| Return period (yr) | Level (m) | 90% CI low (m) | 90% CI high (m) |")
         lines.append("|--------------------|-----------|----------------|-----------------|")
         for lv in ext["levels"]:
-            lines.append(f"| {lv['return_period_yr']} | {lv['level_m']} | "
-                         f"{lv['ci_low_m']} | {lv['ci_high_m']} |")
+            level_str = "n/a" if lv.get("level_m") is None else lv["level_m"]
+            ci_low_str = "n/a" if lv.get("ci_low_m") is None else lv["ci_low_m"]
+            ci_high_str = "n/a" if lv.get("ci_high_m") is None else lv["ci_high_m"]
+            lines.append(f"| {lv['return_period_yr']} | {level_str} | "
+                         f"{ci_low_str} | {ci_high_str} |")
         lines.append(f"\nMethod: {ext['method']}")
 
     # Warnings

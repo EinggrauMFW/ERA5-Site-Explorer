@@ -25,7 +25,7 @@ import xarray as xr
 import wavecalc as wc
 from netcdf_safety import NETCDF_LOCK
 
-ANALYSIS_VERSION = 8
+ANALYSIS_VERSION = 9
 
 class SpectraNodes(NamedTuple):
     node_data: dict
@@ -995,7 +995,8 @@ def sector_section(frame: pd.DataFrame, heading_from: float, half_width: float) 
     in_sector = np.nansum(fraction * np.nansum(flux_dir, axis=1))
     by_flux = float(in_sector / total * 100) if total > 0 else float("nan")
     dm = frame["dm_from"].to_numpy(float)
-    by_mwd = float(np.nanmean(np.abs(wc.angular_difference(dm, heading_from)) <= half_width) * 100)
+    finite_dm = dm[np.isfinite(dm)]
+    by_mwd = float(np.mean(np.abs(wc.angular_difference(finite_dm, heading_from)) <= half_width) * 100) if finite_dm.size > 0 else float("nan")
     energy_by_mwd = float(np.nansum(np.where(np.abs(wc.angular_difference(dm, heading_from)) <= half_width,
                                              frame["flux"].to_numpy(float), 0)) / np.nansum(frame["flux"].to_numpy(float)) * 100)
     return {"kind": "kv", "title": f"Sector flux: heading {heading_from:g}° ± {half_width:g}° (coming from)", "rows": [
@@ -1088,6 +1089,7 @@ def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> 
     node_lists = {(i, j): {"hm0": [], "te": [], "flux": []} for i in range(len(lats)) for j in range(len(lons))}
     all_months = []
     seen_times = set()
+    global_kept_count = 0
 
     for path in paths:
         with NETCDF_LOCK:
@@ -1103,7 +1105,11 @@ def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> 
                 if len(kept_indices) == 0:
                     continue
 
-                selected_indices = kept_indices[::stride]
+                global_indices = global_kept_count + np.arange(len(kept_indices))
+                selected_indices = kept_indices[global_indices % stride == 0]
+                global_kept_count += len(kept_indices)
+                if len(selected_indices) == 0:
+                    continue
 
                 raw_full = ds[variable].isel({time_name: selected_indices})
                 if "expver" in raw_full.dims:
