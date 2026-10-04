@@ -173,7 +173,7 @@ $$\text{weight} = \frac{\operatorname{clip}\big(7.5^\circ + w - |\Delta|,\ 0,\ \
 This assumes flux is uniform inside a bin when a sector edge cuts through it. The share of flux inside is
 $\sum_t\sum_\theta \text{weight}\,J_\theta \big/ \sum_t J$. For comparison the page also gives the share of
 hours whose *mean* direction is inside the sector, and the flux share of those hours; they differ because swell
-and wind sea can lie on opposite sides of the sector edge.
+and wind sea can lie on opposite sides of the sector edge. The percentage of hours inside the sector is restricted to hours with a finite mean direction.
 
 **Partitioning** (`partition_spectra`). When the optional `wavespectra` package is installed, each spectrum
 is split into up to three systems with its PTM3 watershed method, after converting the units
@@ -248,9 +248,10 @@ Above that, one record in every $N$ is used, with $N = \lceil \text{nodes}\times
 and the page states $N$ and the counts. The budget keeps a first, uncached load to roughly the tens of
 seconds on the development machine. On the synthetic case that was measured, sampling changed the node means
 by under 0.1% of their value, but that data had a smooth seasonal cycle, which is the best case for
-sampling; no real multi-year spectra record has been measured (verification item 15).
+sampling; no real multi-year spectra record has been measured (verification item 15). The sampling stride is
+global across files, so the sample does not restart in every file and the sampling note counts exactly the records used.
 
-**Overlapping files.** When two files cover the same timestamp it is counted once and the first file in name order is used, as in the main analysis.
+**Overlapping files.** When two files cover the same timestamp it is counted once and the first file in name order wins even when its value is missing (NaN), so the result can depend on file order, as in the main analysis.
 
 ## 8. Long-term statistics and extremes
 
@@ -294,12 +295,14 @@ data are used.
    $\lambda = n / \text{observed\_years}$, using the time Hm0 was actually observed to exclude gaps.
 5. **Fit.** A generalised Pareto distribution is fitted to the excesses by maximum likelihood,
    `scipy.stats.genpareto.fit(y, floc=0)`, giving shape $\xi$ and scale $\sigma$. A warning is shown if
-   $|\xi| > 0.5$, where the estimator is no longer regular.
+   $|\xi| > 0.5$, where the estimator is no longer regular. When the median time step is more than 1 hour,
+   a warning notes that storm peaks between samples may be missed and extreme levels biased low.
 6. **Return level** for a return period of $T$ years:
 
 $$x_T = u + \frac{\sigma}{\xi}\Big((\lambda T)^{\xi} - 1\Big)\quad(\xi \ne 0),\qquad x_T = u + \sigma\ln(\lambda T)\quad(|\xi| < 10^{-6})$$
 
    A warning appears when $T$ exceeds three times the observed record length: the extrapolation is unreliable.
+   Return periods with $\lambda T < 1$ (shorter than the mean time between events $1/\lambda$) are not reported.
 7. **Interval** (bootstrap, 300 replicates by default, fixed seed). In each replicate, the number of peaks is
    drawn from a Poisson distribution with mean $\lambda\times$years (at least 10), the excesses are resampled
    with replacement, the GPD is refitted at the same threshold, and $x_T$ is recomputed with that replicate's
@@ -309,6 +312,7 @@ $$x_T = u + \frac{\sigma}{\xi}\Big((\lambda T)^{\xi} - 1\Big)\quad(\xi \ne 0),\q
 8. **Threshold sensitivity.** The fit is repeated at the 90, 92.5, 95 and 97.5 percentiles, each with its own
    declustering, and the return level of the *longest* requested period is shown for each. A return level that
    moves with the threshold is a warning sign, and the app shows it but does not choose a threshold.
+   Sensitivity rows with fewer than the minimum peak count (30) are not fitted.
 9. **Return-level plot.** Peaks sorted in descending order are drawn at Weibull plotting positions
    $T_i = 1/\big(\lambda\,i/(n+1)\big)$ against the fitted curve on a log axis.
 
