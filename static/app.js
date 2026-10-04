@@ -74,7 +74,17 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 // --- top navigation follows what is on the page ---------------------------------------------
 function updateNav() {
   const visible = { status: !statusCard.hidden, analysis: !analysisEl.hidden, recent: !$('#recent').hidden };
-  document.querySelectorAll('.topnav a[data-needs]').forEach(link => link.classList.toggle('is-off', !visible[link.dataset.needs]));
+  document.querySelectorAll('.topnav a[data-needs]').forEach(link => {
+    const isOff = !visible[link.dataset.needs];
+    link.classList.toggle('is-off', isOff);
+    if (isOff) {
+      link.setAttribute('tabindex', '-1');
+      link.setAttribute('aria-disabled', 'true');
+    } else {
+      link.removeAttribute('tabindex');
+      link.removeAttribute('aria-disabled');
+    }
+  });
 }
 const navObserver = new IntersectionObserver(entries => {
   entries.filter(entry => entry.isIntersecting).forEach(entry => {
@@ -227,7 +237,8 @@ const PRODUCT_NOTES = {
 
 function buildSegmented() {
   const holder = $('#product-segmented');
-  holder.replaceChildren(...[...productSelect.options].map(option => {
+  const options = [...productSelect.options];
+  const buttons = options.map((option, index) => {
     const [name, detail] = PRODUCT_SEGMENTS[option.value] || [option.textContent, ''];
     const button = node('button', '');
     button.type = 'button';
@@ -238,8 +249,27 @@ function buildSegmented() {
       productSelect.value = option.value;
       productSelect.dispatchEvent(new Event('change'));
     });
+    button.addEventListener('keydown', event => {
+      let targetIndex = -1;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        targetIndex = (index + 1) % options.length;
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        targetIndex = (index - 1 + options.length) % options.length;
+      } else if (event.key === 'Home') {
+        targetIndex = 0;
+      } else if (event.key === 'End') {
+        targetIndex = options.length - 1;
+      }
+      if (targetIndex >= 0) {
+        event.preventDefault();
+        productSelect.value = options[targetIndex].value;
+        productSelect.dispatchEvent(new Event('change'));
+        buttons[targetIndex].focus();
+      }
+    });
     return button;
-  }));
+  });
+  holder.replaceChildren(...buttons);
 }
 
 function applyProduct() {
@@ -370,7 +400,8 @@ function openJob(jobId) {
   analysisEl.hidden = true;
   destroyCharts();
   updateNav();
-  statusCard.scrollIntoView({ behavior:'smooth' });
+  const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  statusCard.scrollIntoView({ behavior });
   poll(jobId);
 }
 
@@ -559,7 +590,12 @@ function renderNodePanel() {
     if (n.valid) {
       tr.tabIndex = 0;
       tr.addEventListener('click', () => selectNode(n));
-      tr.addEventListener('keydown', event => { if (event.key === 'Enter') selectNode(n); });
+      tr.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          if (event.key === ' ') event.preventDefault();
+          selectNode(n);
+        }
+      });
     }
     return tr;
   });
@@ -1104,7 +1140,10 @@ async function loadAnalysis(jobId, { scroll = true } = {}) {
     drawAdvancedCharts();
   }
   renderTabs();
-  if (scroll) analysisEl.scrollIntoView({ behavior:'smooth', block:'start' });
+  if (scroll) {
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    analysisEl.scrollIntoView({ behavior, block:'start' });
+  }
 }
 
 $('#advanced').addEventListener('toggle', () => {

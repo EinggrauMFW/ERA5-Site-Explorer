@@ -176,8 +176,10 @@
     const chips = node('div', 'compare-chips');
     comparedNodes.forEach((n, idx) => {
       const chip = node('div', 'compare-chip');
-      chip.append(node('span', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`));
+      const coordText = `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`;
+      chip.append(node('span', '', coordText));
       const rm = node('button', '', '×');
+      rm.setAttribute('aria-label', `Remove ${coordText} from the comparison`);
       rm.addEventListener('click', () => {
         comparedNodes.splice(idx, 1);
         renderComparison();
@@ -312,6 +314,7 @@
         const controls = node('div', 'screening-controls');
         
         const select = node('select', '');
+        select.setAttribute('aria-label', 'Colour the map by');
         stats.forEach(s => {
           const opt = node('option', '', s.label);
           opt.value = s.id;
