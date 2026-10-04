@@ -1,5 +1,7 @@
 # ERA5 Site Explorer
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23129942.svg)](https://doi.org/10.5281/zenodo.23129942)
+
 A local web app for wave-energy resource work. Pick a site on a map, download ERA5 wave data from
 Copernicus CDS, and analyse it at any grid node of the download: energy flux, climatology, scatter tables,
 wave roses, spectral partitioning, site screening, device performance, extreme values and a report export.

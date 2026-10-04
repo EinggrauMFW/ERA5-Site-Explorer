@@ -3,6 +3,7 @@ message: "If you use this software, please cite it as below."
 title: "ERA5 Site Explorer"
 type: software
 version: 0.1.0
+doi: 10.5281/zenodo.23129942
 date-released: 2026-10-04
 license: MIT
 repository-code: "https://github.com/EinggrauMFW/ERA5-Site-Explorer"
