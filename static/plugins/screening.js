@@ -283,9 +283,17 @@
       return ctx.nodeData && ctx.nodeData.nodes && ctx.nodeData.nodes.filter(n => n.valid).length >= 2;
     },
     async mount(panel, ctx) {
+      screeningData = null;
+      comparedNodes = [];
+      compareContainerEl = null;
+      mapStat = 'flux_mean_kw_m';
+      const jobId = ctx.jobId;
+
       panel.append(node('p', 'hint', 'Loading site screening statistics...'));
       try {
-        screeningData = await api(`/api/jobs/${ctx.jobId}/screening`, { noNode: true });
+        const data = await api(`/api/jobs/${jobId}/screening`, { noNode: true });
+        if (EraExplorer.context().jobId !== jobId) return;
+        screeningData = data;
         
         panel.replaceChildren();
 
@@ -326,7 +334,7 @@
         });
 
         const downloadLink = node('a', 'btn secondary', 'Download table (CSV)');
-        downloadLink.href = `/api/jobs/${ctx.jobId}/screening.csv`;
+        downloadLink.href = `/api/jobs/${jobId}/screening.csv`;
         
         controls.append(node('span', '', 'Colour the map by:'), select, resetMapBtn, downloadLink);
         panel.append(controls);
@@ -348,6 +356,7 @@
         renderComparison();
         
       } catch (err) {
+        if (EraExplorer.context().jobId !== jobId) return;
         panel.replaceChildren(node('p', 'form-error', err.message));
       }
     }

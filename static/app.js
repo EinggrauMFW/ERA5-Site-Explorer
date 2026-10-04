@@ -13,12 +13,16 @@ const probeButton = $('#probe');
 const cancelButton = $('#cancel');
 const resumeButton = $('#resume');
 const resumeError = $('#resume-error');
+const actionError = $('#action-error');
 const deleteButton = $('#delete');
 let marker;
 let gridMarker;
 let activeJob = null;
 let pollTimer = null;
 let charts = [];
+let analysisSeq = 0;
+let lastSuccessfulNode = null;
+let advancedDrawn = false;
 
 const ACTIVE = ['queued', 'running'];
 const PROBE_MARKER = 'Probing CDS with one-day test requests';
@@ -59,7 +63,7 @@ function applyTheme(redraw = true) {
   button.textContent = THEME_ICON[themeMode];
   button.title = button.ariaLabel = `Theme: ${themeMode === 'auto' ? 'automatic' : themeMode}`;
   try { localStorage.setItem('theme', themeMode); } catch (error) { /* ignore */ }
-  if (redraw && activeJob && !analysisEl.hidden) loadAnalysis(activeJob, { scroll: false }); // charts read colours when created
+  if (redraw && activeJob && !analysisEl.hidden && lastAnalysis) redrawCoreCharts();
 }
 $('#theme-toggle').addEventListener('click', () => {
   themeMode = THEMES[(THEMES.indexOf(themeMode) + 1) % THEMES.length];
@@ -353,6 +357,13 @@ async function poll(jobId, failures = 0) {
 
 function openJob(jobId) {
   activeJob = jobId;
+  if (actionError) { actionError.hidden = true; actionError.textContent = ''; }
+  if (gridMarker) { gridMarker.remove(); gridMarker = null; }
+  analysisSeq++;
+  lastAnalysis = null;
+  lastSuccessfulNode = null;
+  advancedDrawn = false;
+  nodeColours = null;
   clearNodes();
   history.replaceState(null, '', `#job=${jobId}`);
   statusCard.hidden = false;
@@ -369,28 +380,74 @@ async function refreshRecent() {
     $('#recent').hidden = !jobs.length;
     updateNav();
     fillCrosscheckSelects(jobs);
-    $('#recent-list').replaceChildren(...jobs.slice(0, 15).map(job => {
-      const item = node('a', `recent-item${job.id === activeJob ? ' is-open' : ''}`);
-      item.href = `#job=${job.id}`;
-      const [name] = PRODUCT_SEGMENTS[job.product || 'single-levels'] || [job.product];
-      item.append(
-        node('span', 'badge', name.replace('Option ', '')),
-        node('span', 'where', `${job.latitude.toFixed(3)}, ${job.longitude.toFixed(3)} · ${job.start} → ${job.end}`),
-        Object.assign(node('span', `pill pill-${job.status}`, isPreview(job) ? (job.probe ? 'probe' : 'preview') : job.status)),
-        node('small', '', `${(PRODUCT_SEGMENTS[job.product || 'single-levels'] || ['', ''])[1]} · job ${job.id}`)
-      );
-      item.addEventListener('click', event => { event.preventDefault(); openJob(job.id); });
-      return item;
-    }));
+    const items = [];
+    for (const job of jobs.slice(0, 15)) {
+      try {
+        const item = node('a', `recent-item${job.id === activeJob ? ' is-open' : ''}`);
+        item.href = `#job=${job.id}`;
+        const [name] = PRODUCT_SEGMENTS[job.product || 'single-levels'] || [job.product || ''];
+        const start = job.start || '—';
+        const end = job.end || '—';
+        item.append(
+          node('span', 'badge', (name || '').replace('Option ', '')),
+          node('span', 'where', `${fmtCoord(job.latitude)}, ${fmtCoord(job.longitude)} · ${start} → ${end}`),
+          Object.assign(node('span', `pill pill-${job.status}`, isPreview(job) ? (job.probe ? 'probe' : 'preview') : job.status)),
+          node('small', '', `${(PRODUCT_SEGMENTS[job.product || 'single-levels'] || ['', ''])[1]} · job ${job.id}`)
+        );
+        item.addEventListener('click', event => { event.preventDefault(); openJob(job.id); });
+        items.push(item);
+      } catch (err) {
+        console.warn('Skipping invalid job in history:', job, err);
+      }
+    }
+    $('#recent-list').replaceChildren(...items);
   } catch (error) { /* the history list is a convenience */ }
 }
 
 cancelButton.addEventListener('click', async () => {
-  if (activeJob) await fetch(`/api/jobs/${activeJob}/cancel`, { method:'POST' });
+  if (!activeJob) return;
+  if (actionError) { actionError.hidden = true; actionError.textContent = ''; }
+  try {
+    const response = await fetch(`/api/jobs/${activeJob}/cancel`, { method: 'POST' });
+    if (!response.ok) {
+      let data = null;
+      try { data = await response.json(); } catch (e) {}
+      if (actionError) {
+        actionError.textContent = (data && data.error) || `Request failed (${response.status})`;
+        actionError.hidden = false;
+      }
+    }
+  } catch (error) {
+    if (actionError) {
+      actionError.textContent = 'Could not reach the server';
+      actionError.hidden = false;
+    }
+  }
 });
+
 deleteButton.addEventListener('click', async () => {
-  if (!activeJob || !confirm('Delete this job and its downloaded files?')) return;
-  await fetch(`/api/jobs/${activeJob}`, { method:'DELETE' });
+  if (!activeJob) return;
+  if (actionError) { actionError.hidden = true; actionError.textContent = ''; }
+  if (!confirm('Delete this job and its downloaded files?')) return;
+  try {
+    const response = await fetch(`/api/jobs/${activeJob}`, { method: 'DELETE' });
+    if (!response.ok) {
+      let data = null;
+      try { data = await response.json(); } catch (e) {}
+      if (actionError) {
+        actionError.textContent = (data && data.error) || `Request failed (${response.status})`;
+        actionError.hidden = false;
+      }
+      return;
+    }
+  } catch (error) {
+    if (actionError) {
+      actionError.textContent = 'Could not reach the server';
+      actionError.hidden = false;
+    }
+    return;
+  }
+  if (gridMarker) { gridMarker.remove(); gridMarker = null; }
   activeJob = null;
   history.replaceState(null, '', location.pathname);
   statusCard.hidden = true;
@@ -577,6 +634,7 @@ function destroyCharts() {
   charts = [];
   for (const id of ['#charts', '#charts-advanced', ...GROUPS.map(g => `#sections-${g}`)]) $(id).replaceChildren();
   $('#advanced').hidden = true;
+  advancedDrawn = false;
 }
 
 const fmt = (value, unit) => value === null || value === undefined ? '—' : `${fmtNum(value)} ${unit}`.trim();
@@ -643,6 +701,43 @@ function pluginContext() {
   };
 }
 
+function destroyCoreCharts() {
+  const chartContainers = [$('#charts'), $('#charts-advanced')];
+  charts = charts.filter(chart => {
+    if (chart && chart.root && chartContainers.some(c => c && c.contains(chart.root))) {
+      chart.destroy();
+      return false;
+    }
+    return true;
+  });
+  $('#charts').replaceChildren();
+  $('#charts-advanced').replaceChildren();
+  advancedDrawn = false;
+}
+
+function drawAdvancedCharts() {
+  if (!lastAnalysis || advancedDrawn) return;
+  const s = lastAnalysis.series;
+  const advanced = lastAnalysis.order.filter(name => s[name].advanced);
+  if (!advanced.length) return;
+  const stamps = lastAnalysis.times.map(time => Date.parse(`${time}Z`) / 1000);
+  advancedDrawn = true;
+  advanced.forEach(name => addChart(s[name], stamps, $('#charts-advanced')));
+}
+
+function redrawCoreCharts() {
+  if (!lastAnalysis) return;
+  destroyCoreCharts();
+  const s = lastAnalysis.series;
+  const stamps = lastAnalysis.times.map(time => Date.parse(`${time}Z`) / 1000);
+  lastAnalysis.order.filter(name => !s[name].advanced).forEach(name => addChart(s[name], stamps, $('#charts')));
+  const advanced = lastAnalysis.order.filter(name => s[name].advanced);
+  $('#advanced').hidden = !advanced.length;
+  if ($('#advanced').open) {
+    drawAdvancedCharts();
+  }
+}
+
 function tabOrder() {
   const plugins = pluginTabs.slice().sort((a, b) => (a.order ?? 100) - (b.order ?? 100)).map(tab => tab.id);
   return [...BUILT_IN_BEFORE_PLUGINS, ...plugins, 'notes'];
@@ -655,7 +750,15 @@ function tabLabel(id) {
 
 function panelHasContent(id) {
   const plugin = pluginTabs.find(tab => tab.id === id);
-  if (plugin) return plugin.available ? !!plugin.available(pluginContext()) : true;
+  if (plugin) {
+    if (!plugin.available) return true;
+    try {
+      return !!plugin.available(pluginContext());
+    } catch (error) {
+      console.error(error);
+      return false;
+    }
+  }
   const panel = $(`#panel-${id}`);
   if (id === 'series') return $('#charts').children.length > 0 || !$('#advanced').hidden;
   if (id === 'nodes') return !!nodeData;
@@ -692,8 +795,18 @@ function activateTab(id, focus = false) {
     mountedPlugins.add(plugin.id);
     const panel = ensurePluginPanel(plugin.id);
     panel.replaceChildren();
-    try { plugin.mount(panel, pluginContext()); }
-    catch (error) { panel.replaceChildren(node('p', 'form-error', `${plugin.label} failed to load: ${error.message}`)); }
+    const renderError = error => {
+      const msg = error && error.message ? error.message : String(error);
+      panel.replaceChildren(node('p', 'form-error', `${plugin.label} failed to load: ${msg}`));
+    };
+    try {
+      const result = plugin.mount(panel, pluginContext());
+      if (result && typeof result.then === 'function') {
+        result.catch(renderError);
+      }
+    } catch (error) {
+      renderError(error);
+    }
   }
   requestAnimationFrame(() => requestAnimationFrame(resizeCharts));
 }
@@ -728,7 +841,13 @@ function renderActions() {
   holder.querySelectorAll('[data-plugin-action]').forEach(el => el.remove());
   const context = pluginContext();
   pluginActions.slice().sort((a, b) => (a.order ?? 100) - (b.order ?? 100)).forEach(action => {
-    const href = action.href(context);
+    let href = null;
+    try {
+      href = action.href(context);
+    } catch (error) {
+      console.error(error);
+      return;
+    }
     if (!href) return;
     const link = node('a', 'btn ghost', action.label);
     link.href = href;
@@ -892,10 +1011,15 @@ function renderSections(sections) {
 }
 
 async function loadAnalysis(jobId, { scroll = true } = {}) {
+  const mySeq = ++analysisSeq;
   analysisEl.hidden = false;
   updateNav();
   $('#analysis-meta').textContent = 'Reading the downloaded NetCDF files…';
-  $('#metrics').replaceChildren(...[0, 1, 2, 3].map(() => Object.assign(node('div', 'metric'), { innerHTML: '<span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span>' })));
+  $('#metrics').replaceChildren(...[0, 1, 2, 3].map(() => {
+    const m = node('div', 'metric');
+    m.append(node('span', 'skeleton'), node('span', 'skeleton'), node('span', 'skeleton'));
+    return m;
+  }));
   destroyCharts();
   if (!nodeData || nodeData.jobId !== jobId) loadNodes(jobId);
   const params = [];
@@ -906,21 +1030,37 @@ async function loadAnalysis(jobId, { scroll = true } = {}) {
   $('#prov-link').href = `/api/jobs/${jobId}/provenance`;
   if (sectorParams) params.push(sectorParams);
   const query = params.length ? `?${params.join('&')}` : '';
-  let response, data;
+
+  function handleFailure(message) {
+    $('#analysis-meta').textContent = message;
+    $('#metrics').replaceChildren();
+    selectedNode = lastSuccessfulNode;
+    $('#node-reset').hidden = !selectedNode;
+    $('#csv-link').href = `/api/jobs/${jobId}/timeseries.csv${selectedNode ? '?' + nodeQuery() : ''}`;
+  }
+
+  let response, data = {};
   try {
     response = await fetch(`/api/jobs/${jobId}/analysis${query}`);
-    data = await response.json();
+    if (mySeq !== analysisSeq || activeJob !== jobId) return;
+    try {
+      data = await response.json();
+    } catch (e) {
+      data = {};
+    }
+    if (mySeq !== analysisSeq || activeJob !== jobId) return;
   } catch (error) {
-    $('#analysis-meta').textContent = 'Analysis unavailable: could not reach the server';
+    if (mySeq !== analysisSeq || activeJob !== jobId) return;
+    handleFailure('Analysis unavailable: could not reach the server');
     return;
   }
-  if (activeJob !== jobId) return;
   if (!response.ok) {
-    $('#analysis-meta').textContent = `Analysis unavailable: ${data.error || 'unknown error'}`;
+    handleFailure(`Analysis unavailable: ${data.error || 'unknown error'}`);
     return;
   }
   $('#sector-form').hidden = data.route !== 'wave-spectra';
   lastAnalysis = data;
+  lastSuccessfulNode = selectedNode;
   mountedPlugins = new Set();
   highlightNode = { lat: data.grid_coordinate.latitude, lon: data.grid_coordinate.longitude };
   renderNodesOnMap();
@@ -960,14 +1100,18 @@ async function loadAnalysis(jobId, { scroll = true } = {}) {
   data.order.filter(name => !s[name].advanced).forEach(name => addChart(s[name], stamps, $('#charts')));
   const advanced = data.order.filter(name => s[name].advanced);
   $('#advanced').hidden = !advanced.length;
-  $('#advanced').addEventListener('toggle', function once() {
-    if (!$('#advanced').open) return;
-    $('#advanced').removeEventListener('toggle', once);
-    advanced.forEach(name => addChart(s[name], stamps, $('#charts-advanced')));
-  });
+  if ($('#advanced').open) {
+    drawAdvancedCharts();
+  }
   renderTabs();
   if (scroll) analysisEl.scrollIntoView({ behavior:'smooth', block:'start' });
 }
+
+$('#advanced').addEventListener('toggle', () => {
+  if ($('#advanced').open) {
+    drawAdvancedCharts();
+  }
+});
 
 $('#sector-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -981,7 +1125,7 @@ function fillCrosscheckSelects(jobs) {
   const fill = (select, product) => {
     const previous = select.value;
     select.replaceChildren(...finished.filter(job => (job.product || 'single-levels') === product).map(job => {
-      const option = node('option', '', `${job.start} → ${job.end} · ${job.latitude.toFixed(3)}, ${job.longitude.toFixed(3)} · ${job.id}`);
+      const option = node('option', '', `${job.start || '—'} → ${job.end || '—'} · ${fmtCoord(job.latitude)}, ${fmtCoord(job.longitude)} · ${job.id}`);
       option.value = job.id;
       return option;
     }));

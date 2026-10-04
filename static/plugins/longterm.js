@@ -69,6 +69,7 @@
 
     /* load data */
     async function load() {
+      status.className = 'lt-status';
       status.textContent = 'Computing long-term statistics…';
       content.replaceChildren();
       const thresh = document.getElementById('lt-thresh').value;
@@ -81,7 +82,7 @@
         data = await api(path);
       } catch (err) {
         status.textContent = 'Error: ' + err.message;
-        status.className = 'form-error';
+        status.className = 'lt-status form-error';
         return;
       }
       status.textContent = '';

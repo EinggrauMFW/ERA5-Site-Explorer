@@ -136,15 +136,19 @@
         listEl.textContent = '';
         detailEl.style.display = 'block';
 
+        sidebarEl.querySelectorAll('.device-picker-note').forEach(el => el.remove());
+
         if (!listData.configured && listData.devices.length === 1 && listData.devices[0].synthetic) {
-            const note = EraExplorer.node('p', 'hint', 'The catalogue folder is set with the DEVICES_DIR environment variable. Devices are read from devices.json and *.csv files in that folder.');
+            const note = EraExplorer.node('p', 'hint device-picker-note', 'The catalogue folder is set with the DEVICES_DIR environment variable. Devices are read from devices.json and *.csv files in that folder.');
             sidebarEl.insertBefore(note, listEl);
         }
 
         if (listData.warnings && listData.warnings.length > 0) {
-            const details = EraExplorer.node('details');
+            const count = listData.warnings.length;
+            const summaryText = count === 1 ? '1 file was skipped' : `${count} files were skipped`;
+            const details = EraExplorer.node('details', 'device-picker-note');
             details.style.margin = '10px';
-            const summary = EraExplorer.node('summary', '', `${listData.warnings.length} files were skipped`);
+            const summary = EraExplorer.node('summary', '', summaryText);
             details.appendChild(summary);
             const ul = EraExplorer.node('ul');
             listData.warnings.forEach(w => ul.appendChild(EraExplorer.node('li', 'hint', w)));
@@ -258,6 +262,7 @@
     }
 
     function renderDetail() {
+        focusedCell = null;
         if (resizeObserver) {
             resizeObserver.disconnect();
             resizeObserver = null;
