@@ -25,7 +25,7 @@ import xarray as xr
 import wavecalc as wc
 from netcdf_safety import NETCDF_LOCK
 
-ANALYSIS_VERSION = 7
+ANALYSIS_VERSION = 8
 
 class SpectraNodes(NamedTuple):
     node_data: dict
@@ -119,6 +119,20 @@ def circular_mean(degrees) -> float | None:
 
 def time_name_of(ds: xr.Dataset) -> str:
     return "valid_time" if "valid_time" in ds.coords else "time"
+
+
+def unique_time_mask(timestamps, seen: set) -> np.ndarray:
+    """Return a boolean mask keeping only the first occurrence of each timestamp not in seen.
+
+    Kept timestamps are added to the ``seen`` set in-place.
+    """
+    times = pd.DatetimeIndex(timestamps)
+    mask = np.zeros(len(times), dtype=bool)
+    for idx, t in enumerate(times):
+        if t not in seen:
+            seen.add(t)
+            mask[idx] = True
+    return mask
 
 
 def pick_cell(ds: xr.Dataset, variable: str, latitude: float, longitude: float,
@@ -1073,6 +1087,7 @@ def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> 
 
     node_lists = {(i, j): {"hm0": [], "te": [], "flux": []} for i in range(len(lats)) for j in range(len(lons))}
     all_months = []
+    seen_times = set()
 
     for path in paths:
         with NETCDF_LOCK:
@@ -1083,12 +1098,19 @@ def compute_spectra_nodes(paths: list[Path], depth_grid, total_records: int) -> 
                 variable, dir_dim, freq_dim = found
                 time_name = time_name_of(ds)
 
-                raw_full = ds[variable].isel({time_name: slice(None, None, stride)})
+                mask = unique_time_mask(ds[time_name].values, seen_times)
+                kept_indices = np.flatnonzero(mask)
+                if len(kept_indices) == 0:
+                    continue
+
+                selected_indices = kept_indices[::stride]
+
+                raw_full = ds[variable].isel({time_name: selected_indices})
                 if "expver" in raw_full.dims:
                     raw_full = raw_full.mean("expver", skipna=True)
 
                 n_strided = raw_full.sizes[time_name]
-                times = pd.DatetimeIndex(ds[time_name].values[::stride])
+                times = pd.DatetimeIndex(ds[time_name].values[selected_indices])
                 all_months.append(times.month.to_numpy())
 
                 for start in range(0, n_strided, CHUNK_SIZE):
@@ -1147,13 +1169,14 @@ def node_summary(files: list[Path], product: str, latitude: float, longitude: fl
     with tempfile.TemporaryDirectory(prefix="era5-nodes-") as temp_name:
         paths = netcdf_paths(data_files, Path(temp_name))
         if product == "wave-spectra":
-            lengths = []
+            seen_times = set()
             for path in paths:
                 with NETCDF_LOCK:
                     with xr.open_dataset(path, engine="netcdf4") as ds:
-                        found = spectra_variable(ds)
-                        lengths.append(ds.sizes[time_name_of(ds)] if found else 0)
-            total_records = sum(lengths)
+                        if spectra_variable(ds) is not None:
+                            time_name = time_name_of(ds)
+                            unique_time_mask(ds[time_name].values, seen_times)
+            total_records = len(seen_times)
 
             if total_records > 0:
                 res = compute_spectra_nodes(paths, depth_grid, total_records)
@@ -1175,7 +1198,16 @@ def node_summary(files: list[Path], product: str, latitude: float, longitude: fl
                                 sums[name][i, j] += values[good].sum() if good.any() else 0.0
                                 counts[name][i, j] += good.sum()
         else:
-            generic_done = False
+            has_wave = False
+            for path in paths:
+                with NETCDF_LOCK:
+                    with xr.open_dataset(path, engine="netcdf4") as ds:
+                        if "swh" in ds.data_vars:
+                            has_wave = True
+                            break
+
+            seen_times = set()
+            generic_lead = None
             for path in paths:
                 with NETCDF_LOCK:
                     with xr.open_dataset(path, engine="netcdf4") as ds:
@@ -1183,40 +1215,57 @@ def node_summary(files: list[Path], product: str, latitude: float, longitude: fl
                         if not names:
                             continue
                         wave = "swh" in names
-                        if not wave and (generic_done or "hm0" in sums):
+                        if has_wave and not wave:
                             continue
+                        if not has_wave:
+                            if generic_lead is None:
+                                generic_lead = names[0]
+                            elif generic_lead not in names:
+                                continue
+
+                        time_name = time_name_of(ds)
+                        mask = unique_time_mask(ds[time_name].values, seen_times)
+                        if not mask.any():
+                            if lats is None:
+                                lats, lons = ds["latitude"].values, ds["longitude"].values
+                            continue
+
                         if "expver" in ds.dims:
                             ds = ds.mean("expver", skipna=True)
-                        time_name = time_name_of(ds)
 
-                        def field(name, ds=ds, time_name=time_name):
+                        lats, lons = ds["latitude"].values, ds["longitude"].values
+                        kept_idx = np.flatnonzero(mask)
+
+                        def field(name, ds=ds, time_name=time_name, kept_idx=kept_idx):
                             data = ds[name]
                             extra = [d for d in data.dims if d not in (time_name, "latitude", "longitude")]
                             if extra:
                                 data = data.isel({d: 0 for d in extra})
+                            data = data.isel({time_name: kept_idx})
                             return data.transpose(time_name, "latitude", "longitude").values.astype(float)
 
                         if wave:
-                            lats, lons = ds["latitude"].values, ds["longitude"].values
                             swh = field("swh")
                             add("hm0", swh)
                             if "mwp" in names:
                                 mwp = field("mwp")
                                 add("te", mwp)
                                 add("flux", wc.deep_water_flux(swh, mwp))
-                        elif "hm0" not in sums:
+                        else:
                             kind = "generic"
-                            lats, lons = ds["latitude"].values, ds["longitude"].values
-                            lead = names[0]
+                            lead = generic_lead
                             values = field(lead)
+                            if value_label is None:
+                                if lead in OTHER_FIELDS:
+                                    label, unit, _ = OTHER_FIELDS[lead]
+                                    value_label = f"{label} ({unit})"
+                                else:
+                                    long_name = ds[lead].attrs.get("long_name", lead)
+                                    value_label = f"{long_name} ({ds[lead].attrs.get('units', '')})"
                             if lead in OTHER_FIELDS:
-                                label, unit, convert = OTHER_FIELDS[lead]
-                                values, value_label = convert(values), f"{label} ({unit})"
-                            else:
-                                long_name = ds[lead].attrs.get("long_name", lead)
-                                value_label = f"{long_name} ({ds[lead].attrs.get('units', '')})"
+                                _, _, convert = OTHER_FIELDS[lead]
+                                values = convert(values)
                             add("value", values)
-                            generic_done = True
 
     if lats is None:
         raise ValueError("No gridded variables were found in the downloaded files")

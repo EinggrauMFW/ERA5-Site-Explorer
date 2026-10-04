@@ -10,6 +10,7 @@ mean Hm0 and mean Te.
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import math
@@ -120,29 +121,36 @@ def _record_summary(frame: pd.DataFrame, warnings: list[str]) -> dict:
 
     # Per calendar year stats
     per_year = []
+    full_years = []
     cal_years = sorted(set(idx.year))
+    idx_years = idx.year.to_numpy()
+    idx_months = idx.month.to_numpy()
     for yr in cal_years:
-        mask = idx.year == yr
-        year_records = int(finite_mask[mask].sum())
-        # Expected records for this year at the median step, limited to the span of the record inside that year
-        year_start = max(start, pd.Timestamp(f"{yr}-01-01", tz=None))
-        year_end = min(end, pd.Timestamp(f"{yr}-12-31 23:59:59", tz=None))
-        span_hours = max((year_end - year_start).total_seconds() / 3600.0, 0.0)
+        year_mask = idx_years == yr
+        year_records = int(finite_mask[year_mask].sum())
+        days_in_yr = 366 if calendar.isleap(yr) else 365
         if step_hours and step_hours > 0:
-            expected = span_hours / step_hours + 1
+            expected_yr = days_in_yr * 24.0 / step_hours
         else:
-            expected = max(year_records, 1)
-        coverage = min(100.0 * year_records / expected, 100.0) if expected > 0 else 0.0
+            expected_yr = max(year_records, 1)
+        coverage = min(100.0 * year_records / expected_yr, 100.0) if expected_yr > 0 else 0.0
         per_year.append({"year": int(yr), "records": year_records, "coverage_pct": _round3(coverage)})
 
-    # Full years: coverage >= 90% AND all 12 months present
-    full_years = []
-    for entry in per_year:
-        yr = entry["year"]
-        if entry["coverage_pct"] is not None and entry["coverage_pct"] >= 90.0:
-            months_present = set(idx[idx.year == yr].month)
-            if len(months_present) == 12:
-                full_years.append(yr)
+        # Full year: records(Y, M) >= 0.9 * expected(Y, M) for every month M = 1..12
+        is_full = True
+        for m in range(1, 13):
+            days_in_m = calendar.monthrange(yr, m)[1]
+            if step_hours and step_hours > 0:
+                expected_ym = days_in_m * 24.0 / step_hours
+            else:
+                expected_ym = 1.0
+            month_mask = year_mask & (idx_months == m)
+            month_records = int(finite_mask[month_mask].sum())
+            if month_records < 0.9 * expected_ym:
+                is_full = False
+                break
+        if is_full:
+            full_years.append(int(yr))
 
     if years < analysis.MIN_RECORD_YEARS:
         warnings.append(
@@ -249,8 +257,8 @@ def _climatology(frame: pd.DataFrame) -> tuple[dict, dict]:
         finite = season_flux[np.isfinite(season_flux)]
         season_means_raw[name] = float(finite.mean()) if finite.size > 0 else None
 
-    # Share denominator: mean of the season means that have data.
-    # The share is defined against the mean of the four season means; if fewer than
+    # Share denominator: sum of the four season means.
+    # The share is defined against the sum of the four season means; if fewer than
     # 4 seasons have data the share is undefined (None) because the annual baseline
     # is incomplete.
     seasons_with_data = [v for v in season_means_raw.values() if v is not None]
@@ -273,7 +281,7 @@ def _climatology(frame: pd.DataFrame) -> tuple[dict, dict]:
                 "reason": "not all 4 seasons have data, so the annual baseline is incomplete",
             })
         else:
-            denom = float(np.mean(seasons_with_data))
+            denom = float(np.sum(seasons_with_data))
             share = 100.0 * raw / denom if denom > 0 else None
             seasonal.append({
                 "season": name,
@@ -510,9 +518,19 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
     # Step 4: excesses
     excesses = peak_values - u
 
-    # Step 5: rate
-    rec_years = exact_years
-    lam = n_peaks / rec_years if rec_years > 0 else 0.0
+    # Step 5: rate over observed time
+    n_finite = int(finite_mask.sum())
+    step_hours = record.get("step_hours") if record else None
+    if (step_hours is None or step_hours <= 0) and len(times) > 1:
+        diffs = np.diff(times).astype("timedelta64[s]").astype(float)
+        step_hours = float(np.median(diffs) / 3600.0)
+
+    if step_hours and step_hours > 0:
+        observed_years = (n_finite - 1) * step_hours / (24.0 * _DAYS_PER_YEAR)
+    else:
+        observed_years = exact_years
+
+    lam = n_peaks / observed_years if observed_years > 0 else 0.0
 
     # Step 4: fit GPD
     try:
@@ -527,13 +545,19 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
         warnings.append("GPD shape parameter |ξ| > 0.5: the maximum-likelihood estimator is outside "
                         "the range where it is regular.")
 
+    if observed_years < 0.95 * exact_years:
+        warnings.append(
+            f"The record has gaps: Hm0 was observed for {observed_years:.1f} of {exact_years:.1f} years. "
+            "The event rate uses the observed time, not the calendar span."
+        )
+
     # Step 6: return levels
     return_years_list = [float(t) for t in return_years]
     levels = []
     for T in return_years_list:
         x_T = _return_level(u, sigma, xi, lam, T)
-        if T > 3 * rec_years:
-            warnings.append(f"Return period {T} yr exceeds 3× the record length ({rec_years:.1f} yr): "
+        if T > 3 * observed_years:
+            warnings.append(f"Return period {T} yr exceeds 3× the record length ({observed_years:.1f} yr): "
                             "extrapolation beyond three times the record length is unreliable.")
         levels.append({"return_period_yr": T, "level_m": _round3(x_T), "ci_low_m": None, "ci_high_m": None})
 
@@ -543,14 +567,14 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
         rng = np.random.default_rng(seed)
         boot_levels = {str(T): [] for T in return_years_list}
         for _ in range(bootstrap):
-            n_star = max(10, int(rng.poisson(lam * rec_years)))
+            n_star = max(10, int(rng.poisson(lam * observed_years)))
             resample = rng.choice(excesses, size=n_star, replace=True)
             try:
                 c_b, _, sigma_b = genpareto.fit(resample, floc=0)
             except Exception:
                 bootstrap_failures += 1
                 continue
-            lam_star = n_star / rec_years
+            lam_star = n_star / observed_years if observed_years > 0 else 0.0
             for T in return_years_list:
                 x_T_b = _return_level(u, float(sigma_b), float(c_b), lam_star, T)
                 boot_levels[str(T)].append(x_T_b)
@@ -584,7 +608,7 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
             sensitivity.append({"percentile": pct, "threshold_m": _round3(u_s), "n_peaks": n_s,
                                 "xi": None, "sigma": None, "level_m": None})
             continue
-        lam_s = n_s / rec_years if rec_years > 0 else 0.0
+        lam_s = n_s / observed_years if observed_years > 0 else 0.0
         x_T_s = _return_level(u_s, float(sigma_s), float(c_s), lam_s, max_return)
         sensitivity.append({
             "percentile": pct, "threshold_m": _round3(u_s), "n_peaks": n_s,
@@ -622,6 +646,8 @@ def _extremes(frame: pd.DataFrame, record: dict, *, exact_years: float, threshol
         "threshold_pct": threshold_pct,
         "n_peaks": n_peaks,
         "rate_per_yr": _round3(lam),
+        "observed_years": _round3(observed_years),
+        "record_years": _round3(exact_years),
         "xi": _round3(xi),
         "sigma": _round3(sigma),
         "levels": levels,
