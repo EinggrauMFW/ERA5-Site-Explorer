@@ -21,7 +21,9 @@ EraExplorer.registerTab({
             formContainer.appendChild(errorDiv);
 
             const nameDiv = EraExplorer.node('div', 'field');
-            nameDiv.appendChild(EraExplorer.node('label', '', 'Device name'));
+            const nameLabel = EraExplorer.node('label', '', 'Device name');
+            nameLabel.htmlFor = 'device_name';
+            nameDiv.appendChild(nameLabel);
             const nameInput = EraExplorer.node('input', 'input');
             nameInput.type = 'text';
             nameInput.id = 'device_name';
@@ -30,19 +32,23 @@ EraExplorer.registerTab({
             nameDiv.appendChild(nameInput);
 
             const csvDiv = EraExplorer.node('div', 'field');
-            const csvLabel = EraExplorer.node('label', '', 'Power Matrix CSV (');
+            const csvHeader = EraExplorer.node('div', 'device-csv-header');
+            const csvLabel = EraExplorer.node('label', '', 'Power Matrix CSV');
+            csvLabel.htmlFor = 'device_csv';
             const useExample = EraExplorer.node('a', '', 'use the synthetic example');
             useExample.href = '#';
             useExample.id = 'use_example_csv';
-            csvLabel.appendChild(useExample);
-            csvLabel.appendChild(document.createTextNode(')'));
-            csvDiv.appendChild(csvLabel);
+            csvHeader.appendChild(csvLabel);
+            csvHeader.appendChild(document.createTextNode(' ('));
+            csvHeader.appendChild(useExample);
+            csvHeader.appendChild(document.createTextNode(')'));
 
             const btnCatalogue = EraExplorer.node('button', 'btn ghost', 'Choose from catalogue…');
             btnCatalogue.id = 'device_catalogue';
             btnCatalogue.type = 'button';
             btnCatalogue.style.marginLeft = '8px';
-            csvLabel.appendChild(btnCatalogue);
+            csvHeader.appendChild(btnCatalogue);
+            csvDiv.appendChild(csvHeader);
 
             const csvInput = EraExplorer.node('input', '');
             csvInput.type = 'file';
@@ -62,6 +68,7 @@ EraExplorer.registerTab({
             const catalogueChipText = EraExplorer.node('span');
             const catalogueChipClear = EraExplorer.node('button', 'btn ghost', '×');
             catalogueChipClear.type = 'button';
+            catalogueChipClear.setAttribute('aria-label', 'Clear the chosen catalogue device');
             catalogueChipClear.style.padding = '2px 8px';
             catalogueChip.appendChild(catalogueChipText);
             catalogueChip.appendChild(catalogueChipClear);
@@ -110,7 +117,9 @@ EraExplorer.registerTab({
             });
 
             const ratedDiv = EraExplorer.node('div', 'field');
-            ratedDiv.appendChild(EraExplorer.node('label', '', 'Rated power (kW, optional)'));
+            const ratedLabel = EraExplorer.node('label', '', 'Rated power (kW, optional)');
+            ratedLabel.htmlFor = 'device_rated';
+            ratedDiv.appendChild(ratedLabel);
             const ratedInput = EraExplorer.node('input', 'input');
             ratedInput.type = 'number';
             ratedInput.id = 'device_rated';
@@ -119,7 +128,9 @@ EraExplorer.registerTab({
             ratedDiv.appendChild(ratedInput);
 
             const widthDiv = EraExplorer.node('div', 'field');
-            widthDiv.appendChild(EraExplorer.node('label', '', 'Characteristic width (m, optional)'));
+            const widthLabel = EraExplorer.node('label', '', 'Characteristic width (m, optional)');
+            widthLabel.htmlFor = 'device_width';
+            widthDiv.appendChild(widthLabel);
             const widthInput = EraExplorer.node('input', 'input');
             widthInput.type = 'number';
             widthInput.id = 'device_width';
@@ -138,7 +149,9 @@ EraExplorer.registerTab({
             formContainer.appendChild(row2);
 
             const periodDiv = EraExplorer.node('div', 'field');
-            periodDiv.appendChild(EraExplorer.node('label', '', 'Period axis'));
+            const periodLabel = EraExplorer.node('label', '', 'Period axis');
+            periodLabel.htmlFor = 'device_period';
+            periodDiv.appendChild(periodLabel);
             const periodSelect = EraExplorer.node('select', 'input');
             periodSelect.id = 'device_period';
             const optTe = EraExplorer.node('option', '', 'Te (energy period)'); optTe.value = 'te';
@@ -148,7 +161,9 @@ EraExplorer.registerTab({
             periodDiv.appendChild(periodSelect);
 
             const binDiv = EraExplorer.node('div', 'field');
-            binDiv.appendChild(EraExplorer.node('label', '', 'Bin convention'));
+            const binLabel = EraExplorer.node('label', '', 'Bin convention');
+            binLabel.htmlFor = 'device_bin';
+            binDiv.appendChild(binLabel);
             const binSelect = EraExplorer.node('select', 'input');
             binSelect.id = 'device_bin';
             const optCentres = EraExplorer.node('option', '', 'Centres'); optCentres.value = 'centres'; optCentres.selected = true;

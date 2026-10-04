@@ -85,6 +85,8 @@
 }
 .compare-chart-container {
     height: 300px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 /* Wide tables scroll inside their own box instead of widening the page on a phone. */

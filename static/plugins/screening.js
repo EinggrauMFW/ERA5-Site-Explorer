@@ -115,51 +115,66 @@
 
     const tbody = node('tbody', '');
     
-    // Find max for color scaling
+    // Find max for color scaling across monthly and seasonal fluxes
     let maxVal = 0;
     top10.forEach(n => {
       n.monthly_flux_kw_m.forEach(v => {
         if (v && v > maxVal) maxVal = v;
       });
+      seasons.forEach(s => {
+        const v = n.season_flux_kw_m && n.season_flux_kw_m[s];
+        if (v && v > maxVal) maxVal = v;
+      });
     });
 
     top10.forEach(n => {
-      const row1 = node('tr', '');
-      row1.append(node('td', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)} (Months)`));
+      const row = node('tr', '');
+      row.append(node('td', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`));
       n.monthly_flux_kw_m.forEach(v => {
         const td = node('td', 'heat-cell');
         if (v != null) {
           td.textContent = fmtNum(v);
-          const pct = maxVal > 0 ? (v / maxVal) * 100 : 0;
-          td.style.background = `color-mix(in srgb, var(--chart-line) ${pct}%, transparent)`;
+          const pct = maxVal > 0 ? (v / maxVal) * 42 : 0;
+          td.style.background = `color-mix(in srgb, var(--chart-line) ${pct.toFixed(1)}%, transparent)`;
         } else {
           td.textContent = '—';
         }
-        row1.append(td);
+        row.append(td);
       });
-      tbody.append(row1);
-
-      const row2 = node('tr', '');
-      row2.append(node('td', '', 'Seasons'));
-      // span 3 for each season
-      seasons.forEach((s) => {
-        const td = node('td', 'heat-cell');
-        td.colSpan = 3;
-        const v = n.season_flux_kw_m[s];
-        if (v != null) {
-          td.textContent = `${s}: ${fmtNum(v)}`;
-          const pct = maxVal > 0 ? (v / maxVal) * 100 : 0;
-          td.style.background = `color-mix(in srgb, var(--chart-line) ${pct}%, transparent)`;
-        } else {
-          td.textContent = `${s}: —`;
-        }
-        row2.append(td);
-      });
-      tbody.append(row2);
+      tbody.append(row);
     });
 
     table.append(tbody);
-    container.replaceChildren(table);
+
+    const seasonsTable = node('table', 'heat-table seasons');
+    const seasonsThead = node('thead', '');
+    const seasonsHeader = node('tr', '');
+    seasonsHeader.append(node('th', '', 'Node'));
+    seasons.forEach(s => seasonsHeader.append(node('th', 'num', s)));
+    seasonsThead.append(seasonsHeader);
+    seasonsTable.append(seasonsThead);
+
+    const seasonsTbody = node('tbody', '');
+    top10.forEach(n => {
+      const sRow = node('tr', '');
+      sRow.append(node('td', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`));
+      seasons.forEach(s => {
+        const td = node('td', 'heat-cell');
+        const v = n.season_flux_kw_m && n.season_flux_kw_m[s];
+        if (v != null) {
+          td.textContent = fmtNum(v);
+          const pct = maxVal > 0 ? (v / maxVal) * 42 : 0;
+          td.style.background = `color-mix(in srgb, var(--chart-line) ${pct.toFixed(1)}%, transparent)`;
+        } else {
+          td.textContent = '—';
+        }
+        sRow.append(td);
+      });
+      seasonsTbody.append(sRow);
+    });
+    seasonsTable.append(seasonsTbody);
+
+    container.replaceChildren(table, seasonsTable);
   }
 
   let compareContainerEl = null;
@@ -176,8 +191,10 @@
     const chips = node('div', 'compare-chips');
     comparedNodes.forEach((n, idx) => {
       const chip = node('div', 'compare-chip');
-      chip.append(node('span', '', `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`));
+      const coordText = `${EraExplorer.fmtCoord(n.lat)}, ${EraExplorer.fmtCoord(n.lon)}`;
+      chip.append(node('span', '', coordText));
       const rm = node('button', '', '×');
+      rm.setAttribute('aria-label', `Remove ${coordText} from the comparison`);
       rm.addEventListener('click', () => {
         comparedNodes.splice(idx, 1);
         renderComparison();
@@ -254,7 +271,7 @@
       });
 
       const opts = {
-        width: 800,
+        width: chartContainer.clientWidth || 200,
         height: 300,
         ...chartTheme(),
         series,
@@ -312,6 +329,7 @@
         const controls = node('div', 'screening-controls');
         
         const select = node('select', '');
+        select.setAttribute('aria-label', 'Colour the map by');
         stats.forEach(s => {
           const opt = node('option', '', s.label);
           opt.value = s.id;

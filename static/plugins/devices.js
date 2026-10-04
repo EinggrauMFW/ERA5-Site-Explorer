@@ -36,6 +36,7 @@
 
         listEl = EraExplorer.node('ul', 'device-picker-list');
         listEl.setAttribute('role', 'listbox');
+        listEl.setAttribute('aria-label', 'Devices');
         listEl.tabIndex = 0;
 
         listEl.addEventListener('keydown', handleListKeydown);
@@ -470,11 +471,11 @@
                     outlineRect.setAttribute('height', rect.getAttribute('height'));
                     outlineRect.style.display = 'block';
 
-                    const svgRect = svg.getBoundingClientRect();
+                    const containerRect = hmContainer.getBoundingClientRect();
                     const cellRect = rect.getBoundingClientRect();
                     tooltip.style.display = 'block';
-                    tooltip.style.left = (cellRect.left - svgRect.left + cellRect.width / 2) + 'px';
-                    tooltip.style.top = (cellRect.top - svgRect.top - 30) + 'px';
+                    tooltip.style.left = (cellRect.left - containerRect.left + cellRect.width / 2) + 'px';
+                    tooltip.style.top = (cellRect.top - containerRect.top - 30) + 'px';
                 }
             }
 
@@ -629,22 +630,31 @@
         settings.appendChild(EraExplorer.node('h4', '', 'Settings used when picked'));
 
         const rDiv = EraExplorer.node('div', 'field');
-        rDiv.appendChild(EraExplorer.node('label', '', 'Rated power (kW, optional)'));
+        const rLabel = EraExplorer.node('label', '', 'Rated power (kW, optional)');
+        rLabel.htmlFor = 'device-picker-rated';
+        rDiv.appendChild(rLabel);
         const rInp = EraExplorer.node('input');
+        rInp.id = 'device-picker-rated';
         rInp.type = 'number'; rInp.step = 'any';
         if (d.rated_kw) rInp.value = d.rated_kw;
         rDiv.appendChild(rInp);
 
         const wDiv = EraExplorer.node('div', 'field');
-        wDiv.appendChild(EraExplorer.node('label', '', 'Characteristic width (m, optional)'));
+        const wLabel = EraExplorer.node('label', '', 'Characteristic width (m, optional)');
+        wLabel.htmlFor = 'device-picker-width';
+        wDiv.appendChild(wLabel);
         const wInp = EraExplorer.node('input');
+        wInp.id = 'device-picker-width';
         wInp.type = 'number'; wInp.step = 'any';
         if (d.width_m) wInp.value = d.width_m;
         wDiv.appendChild(wInp);
 
         const pDiv = EraExplorer.node('div', 'field');
-        pDiv.appendChild(EraExplorer.node('label', '', 'Period axis'));
+        const pLabel = EraExplorer.node('label', '', 'Period axis');
+        pLabel.htmlFor = 'device-picker-period';
+        pDiv.appendChild(pLabel);
         const pSel = EraExplorer.node('select');
+        pSel.id = 'device-picker-period';
         const oTe = EraExplorer.node('option', '', 'Te'); oTe.value = 'te';
         const oTp = EraExplorer.node('option', '', 'Tp'); oTp.value = 'tp';
         const oUn = EraExplorer.node('option', '', 'Unknown: evaluate both'); oUn.value = 'unknown';
