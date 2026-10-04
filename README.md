@@ -23,7 +23,8 @@ and needs no account or token.
 ## Screenshots
 
 All of these are from one Option A demonstration job: ERA5 single levels, hourly, 2025 (0.93 years, 8,184 records),
-near −8.75°, 119.28° (Komodo–Flores area), captured with Playwright in headless Chromium. The record is far shorter
+near −8.75°, 119.28° (Komodo–Flores area), captured with Playwright in headless Chromium (`python tools/capture_screenshots.py --job-dir <finished Option A job folder>`
+regenerates them from a copy of a job; check the captions if you use a different job). The record is far shorter
 than the 10 years the app itself asks for, and the nearest ocean node is 36.4 km from the site, so the numbers
 illustrate the interface and are not a resource estimate. The two device views use the app's built-in **synthetic
 example** matrix, not a real device. Not shown: Option B (2D spectra: the spectrum-based wave rose, partitions, sector
@@ -365,6 +366,7 @@ can be configured via `ALLOWED_HOSTS`.
 | `plugin_*.py` with `screening.py`, `device.py`, `longterm.py`, `report.py` | The four resource tools |
 | `templates/`, `static/` | Interface; `static/plugins/` holds the tool frontends |
 | `tests/` | Offline test suite on synthetic data |
+| `tools/` | `capture_screenshots.py`: regenerates the README screenshots from a finished Option A job |
 | `docs/` | `numerics.md` (methods), `verification.md` (what is verified) and the work-package specifications |
 
 ## Tests
