@@ -149,6 +149,7 @@
 }
 
 .heatmap-container {
+    position: relative;
     width: 100%;
 }
 .heatmap-svg {

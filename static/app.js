@@ -38,14 +38,32 @@ const PRODUCT_SEGMENTS = {
 
 // Numbers shown with a consistent number of decimals, by magnitude.
 function fmtNum(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
-  const n = Number(value), a = Math.abs(n);
-  return n.toLocaleString(undefined, { maximumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2, minimumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2 });
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  let d = 2;
+  if (a >= 100) {
+    d = 0;
+  } else if (a >= 10) {
+    d = Math.round(a * 10) / 10 >= 100 ? 0 : 1;
+  } else {
+    d = Math.round(a * 100) / 100 >= 10 ? 1 : 2;
+  }
+  const factor = Math.pow(10, d);
+  let rounded = Math.round(n * factor) / factor;
+  if (Object.is(rounded, -0) || rounded === 0) rounded = 0;
+  let res = rounded.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  if (res.startsWith('-') && Number(res) === 0) res = res.slice(1);
+  return res;
 }
 
 function fmtCoord(val) {
-  if (val === null || val === undefined || !Number.isFinite(Number(val))) return '—';
-  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 3, useGrouping: false }).format(val);
+  if (val === null || val === undefined || (typeof val === 'string' && val.trim() === '')) return '—';
+  const n = Number(val);
+  if (!Number.isFinite(n)) return '—';
+  const formatted = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 3, useGrouping: false }).format(n);
+  return Number(formatted) === 0 ? formatted.replace('-', '') : formatted;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -74,7 +92,17 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 // --- top navigation follows what is on the page ---------------------------------------------
 function updateNav() {
   const visible = { status: !statusCard.hidden, analysis: !analysisEl.hidden, recent: !$('#recent').hidden };
-  document.querySelectorAll('.topnav a[data-needs]').forEach(link => link.classList.toggle('is-off', !visible[link.dataset.needs]));
+  document.querySelectorAll('.topnav a[data-needs]').forEach(link => {
+    const isOff = !visible[link.dataset.needs];
+    link.classList.toggle('is-off', isOff);
+    if (isOff) {
+      link.setAttribute('tabindex', '-1');
+      link.setAttribute('aria-disabled', 'true');
+    } else {
+      link.removeAttribute('tabindex');
+      link.removeAttribute('aria-disabled');
+    }
+  });
 }
 const navObserver = new IntersectionObserver(entries => {
   entries.filter(entry => entry.isIntersecting).forEach(entry => {
@@ -227,7 +255,8 @@ const PRODUCT_NOTES = {
 
 function buildSegmented() {
   const holder = $('#product-segmented');
-  holder.replaceChildren(...[...productSelect.options].map(option => {
+  const options = [...productSelect.options];
+  const buttons = options.map((option, index) => {
     const [name, detail] = PRODUCT_SEGMENTS[option.value] || [option.textContent, ''];
     const button = node('button', '');
     button.type = 'button';
@@ -238,8 +267,27 @@ function buildSegmented() {
       productSelect.value = option.value;
       productSelect.dispatchEvent(new Event('change'));
     });
+    button.addEventListener('keydown', event => {
+      let targetIndex = -1;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        targetIndex = (index + 1) % options.length;
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        targetIndex = (index - 1 + options.length) % options.length;
+      } else if (event.key === 'Home') {
+        targetIndex = 0;
+      } else if (event.key === 'End') {
+        targetIndex = options.length - 1;
+      }
+      if (targetIndex >= 0) {
+        event.preventDefault();
+        productSelect.value = options[targetIndex].value;
+        productSelect.dispatchEvent(new Event('change'));
+        buttons[targetIndex].focus();
+      }
+    });
     return button;
-  }));
+  });
+  holder.replaceChildren(...buttons);
 }
 
 function applyProduct() {
@@ -370,7 +418,8 @@ function openJob(jobId) {
   analysisEl.hidden = true;
   destroyCharts();
   updateNav();
-  statusCard.scrollIntoView({ behavior:'smooth' });
+  const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  statusCard.scrollIntoView({ behavior });
   poll(jobId);
 }
 
@@ -559,7 +608,12 @@ function renderNodePanel() {
     if (n.valid) {
       tr.tabIndex = 0;
       tr.addEventListener('click', () => selectNode(n));
-      tr.addEventListener('keydown', event => { if (event.key === 'Enter') selectNode(n); });
+      tr.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          if (event.key === ' ') event.preventDefault();
+          selectNode(n);
+        }
+      });
     }
     return tr;
   });
@@ -667,7 +721,7 @@ function addChart(item, stamps, container) {
     data.push(item.max);
   }
   charts.push(new uPlot({
-    width: Math.max(280, holder.clientWidth || article.clientWidth - 36), height: 220,
+    width: Math.max(200, holder.clientWidth || article.clientWidth - 36), height: 220,
     series, scales: item.circular ? { y:{ range:[0, 360] } } : {},
     axes: [axis, { ...axis, size: 56 }], legend: { live:true }, cursor: { drag:{ x:true, y:false } }
   }, data, holder));
@@ -677,7 +731,7 @@ function addChart(item, stamps, container) {
 function resizeCharts() {
   charts.forEach(chart => {
     const holder = chart.root.parentElement;
-    if (holder && holder.offsetParent !== null) chart.setSize({ width: Math.max(280, holder.clientWidth), height: chart.height });
+    if (holder && holder.offsetParent !== null) chart.setSize({ width: Math.max(200, holder.clientWidth), height: chart.height });
   });
 }
 window.addEventListener('resize', resizeCharts);
@@ -908,10 +962,9 @@ function renderScatter(section) {
       for (let j = 0; j < yEdges.length - 1; j++) {
         const value = matrix[i][j];
         const td = node('td', '', value > 0 ? (value >= 10 ? value.toFixed(0) : value.toFixed(1)) : '');
-        // Heat comes from the chart colour token so it reads in both themes; the strongest cells
-        // flip to the surface colour for contrast.
-        if (value > 0) td.style.background = `color-mix(in srgb, var(--chart-line) ${Math.round(10 + 78 * value / peak)}%, transparent)`;
-        if (value > 0.55 * peak) td.style.color = 'var(--surface)';
+        // Heat comes from the chart colour token so it reads in both themes; fill is capped
+        // so normal text colour meets contrast in both themes.
+        if (value > 0) td.style.background = `color-mix(in srgb, var(--chart-line) ${Math.round(42 * value / peak)}%, transparent)`;
         tr.append(td);
       }
       table.append(tr);
@@ -1104,7 +1157,10 @@ async function loadAnalysis(jobId, { scroll = true } = {}) {
     drawAdvancedCharts();
   }
   renderTabs();
-  if (scroll) analysisEl.scrollIntoView({ behavior:'smooth', block:'start' });
+  if (scroll) {
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    analysisEl.scrollIntoView({ behavior, block:'start' });
+  }
 }
 
 $('#advanced').addEventListener('toggle', () => {
