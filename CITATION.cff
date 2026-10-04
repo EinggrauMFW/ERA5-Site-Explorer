@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "ERA5 Site Explorer"
+type: software
+version: 0.1.0
+date-released: 2026-10-04
+license: MIT
+repository-code: "https://github.com/EinggrauMFW/ERA5-Site-Explorer"
+url: "https://github.com/EinggrauMFW/ERA5-Site-Explorer"
+abstract: >-
+  A local web app for wave-energy resource screening: download ERA5 wave data from the Copernicus Climate
+  Data Store, and analyse it at any grid node (energy flux, climatology, scatter tables, wave roses, site
+  screening, device performance from a power matrix, extreme values). Two data routes, integrated
+  parameters and 2D spectra, are kept separate and cross-checked. Numerics are tested on synthetic data
+  with known answers; real-data validation is incomplete (see docs/verification.md).
+keywords:
+  - ERA5
+  - wave energy
+  - ocean waves
+  - Copernicus Climate Data Store
+  - resource assessment
+authors:
+  - family-names: Winawan
+    given-names: Faris
