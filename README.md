@@ -22,10 +22,16 @@ and needs no account or token.
 
 ## Screenshots
 
-All four are from one Option A demonstration job: ERA5 single levels, hourly, 2025 (0.93 years, 8,184 records),
-near −8.75°, 119.28° (Komodo–Flores area). The record is far shorter than the 10 years the app itself asks for, and the
-nearest ocean node is 36.4 km from the site, so the numbers illustrate the interface and are not a resource
-estimate.
+All of these are from one Option A demonstration job: ERA5 single levels, hourly, 2025 (0.93 years, 8,184 records),
+near −8.75°, 119.28° (Komodo–Flores area), captured with Playwright in headless Chromium (`python tools/capture_screenshots.py --job-dir <finished Option A job folder>`
+regenerates them from a copy of a job; check the captions if you use a different job). The record is far shorter
+than the 10 years the app itself asks for, and the nearest ocean node is 36.4 km from the site, so the numbers
+illustrate the interface and are not a resource estimate. The two device views use the app's built-in **synthetic
+example** matrix, not a real device. Not shown: Option B (2D spectra: the spectrum-based wave rose, partitions, sector
+flux) and the Option A vs Option B cross-check, because no real Option B job has completed (see
+[docs/verification.md](docs/verification.md)).
+
+### From site to numbers
 
 | | |
 |---|---|
@@ -33,6 +39,26 @@ estimate.
 | **Site request.** Click the map, choose the data route, variables, time step and period. Grid nodes are drawn after a download, coloured by mean flux. | **Analysis.** Key numbers, the short-record warning and deep-water flux statistics (flux computed per record, then averaged). |
 | ![Hm0–Te scatter diagram and wave rose](docs/screenshots/03-scatter-wave-rose.jpg) | ![Grid nodes table for the downloaded box](docs/screenshots/04-grid-nodes.jpg) |
 | **Distributions.** Hm0–Te scatter with the share of records per bin, and the wave rose by hours and by energy. | **Grid nodes.** Every ERA5 node in the box with depth, mean flux, Hm0 and Te. Neighbouring nodes here differ a lot, so the choice of node matters. |
+| ![Time series of Hm0, Te, Tp and energy flux](docs/screenshots/05-time-series.jpg) | ![Quality checks](docs/screenshots/06-quality-checks.jpg) |
+| **Time series.** Hm0, Te, Tp and flux as blocks of records (mean, with the block maximum), with a cursor readout. | **Quality.** Swell and wind-sea composition, the swh² ≈ shww² + shts² and Tm02 ≤ Tm01 ≤ Te consistency checks, Te/Tp, steepness, directional width and a deep-water validity check against the model depth. |
+
+### Resource tools
+
+| | |
+|---|---|
+| ![Site screening: node ranking and seasonal tables](docs/screenshots/07-site-screening.jpg) | ![Device assessment from a power matrix](docs/screenshots/08-device-assessment.jpg) |
+| **Screening.** Ranks every node by mean flux, P95, variability and seasonality; colours the map by any of these; compares up to three nodes; and shows monthly and seasonal tables. | **Device.** Annual energy production and capture width from a power matrix. Shown with the synthetic example. When the period axis is not stated, both Te and Tp are evaluated and the range is reported. |
+| ![Device power-matrix picker with heatmap preview](docs/screenshots/09-device-picker.jpg) | ![Long-term statistics](docs/screenshots/10-long-term.jpg) |
+| **Device picker.** Choose a matrix from your own catalogue folder (`devices.json` and CSV files) with a heatmap preview. With no catalogue folder it offers only the synthetic example, as here. | **Long-term.** Monthly climatology, variability indices and, with at least three complete years, interannual variation. Extreme-value return levels need enough independent peaks, so on this short record the page says so instead of fitting. |
+| ![Export: report, bundle, CSV tables and SVG figures](docs/screenshots/11-export-report.jpg) | ![Notes and limits for this analysis](docs/screenshots/12-notes-and-limits.jpg) |
+| **Export.** A Markdown report, a ZIP bundle, CSV tables and SVG figures in light and dark. | **Notes & limits.** The assumptions that matter for the data route used, listed with every analysis. |
+
+### Appearance
+
+| | |
+|---|---|
+| ![Light theme](docs/screenshots/13-light-theme.jpg) | ![Analysis on a phone](docs/screenshots/14-phone-layout.jpg) |
+| **Light and dark themes.** Automatic by default, or chosen with the button. | **Phone width.** The layout adapts to phone width (checked at 375 px). |
 
 ## Setup
 
@@ -340,6 +366,7 @@ can be configured via `ALLOWED_HOSTS`.
 | `plugin_*.py` with `screening.py`, `device.py`, `longterm.py`, `report.py` | The four resource tools |
 | `templates/`, `static/` | Interface; `static/plugins/` holds the tool frontends |
 | `tests/` | Offline test suite on synthetic data |
+| `tools/` | `capture_screenshots.py`: regenerates the README screenshots from a finished Option A job |
 | `docs/` | `numerics.md` (methods), `verification.md` (what is verified) and the work-package specifications |
 
 ## Tests
