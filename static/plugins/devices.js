@@ -471,11 +471,11 @@
                     outlineRect.setAttribute('height', rect.getAttribute('height'));
                     outlineRect.style.display = 'block';
 
-                    const svgRect = svg.getBoundingClientRect();
+                    const containerRect = hmContainer.getBoundingClientRect();
                     const cellRect = rect.getBoundingClientRect();
                     tooltip.style.display = 'block';
-                    tooltip.style.left = (cellRect.left - svgRect.left + cellRect.width / 2) + 'px';
-                    tooltip.style.top = (cellRect.top - svgRect.top - 30) + 'px';
+                    tooltip.style.left = (cellRect.left - containerRect.left + cellRect.width / 2) + 'px';
+                    tooltip.style.top = (cellRect.top - containerRect.top - 30) + 'px';
                 }
             }
 

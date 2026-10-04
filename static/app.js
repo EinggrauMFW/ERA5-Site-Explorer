@@ -38,14 +38,32 @@ const PRODUCT_SEGMENTS = {
 
 // Numbers shown with a consistent number of decimals, by magnitude.
 function fmtNum(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
-  const n = Number(value), a = Math.abs(n);
-  return n.toLocaleString(undefined, { maximumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2, minimumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2 });
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  let d = 2;
+  if (a >= 100) {
+    d = 0;
+  } else if (a >= 10) {
+    d = Math.round(a * 10) / 10 >= 100 ? 0 : 1;
+  } else {
+    d = Math.round(a * 100) / 100 >= 10 ? 1 : 2;
+  }
+  const factor = Math.pow(10, d);
+  let rounded = Math.round(n * factor) / factor;
+  if (Object.is(rounded, -0) || rounded === 0) rounded = 0;
+  let res = rounded.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  if (res.startsWith('-') && Number(res) === 0) res = res.slice(1);
+  return res;
 }
 
 function fmtCoord(val) {
-  if (val === null || val === undefined || !Number.isFinite(Number(val))) return '—';
-  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 3, useGrouping: false }).format(val);
+  if (val === null || val === undefined || (typeof val === 'string' && val.trim() === '')) return '—';
+  const n = Number(val);
+  if (!Number.isFinite(n)) return '—';
+  const formatted = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 3, useGrouping: false }).format(n);
+  return Number(formatted) === 0 ? formatted.replace('-', '') : formatted;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -703,7 +721,7 @@ function addChart(item, stamps, container) {
     data.push(item.max);
   }
   charts.push(new uPlot({
-    width: Math.max(280, holder.clientWidth || article.clientWidth - 36), height: 220,
+    width: Math.max(200, holder.clientWidth || article.clientWidth - 36), height: 220,
     series, scales: item.circular ? { y:{ range:[0, 360] } } : {},
     axes: [axis, { ...axis, size: 56 }], legend: { live:true }, cursor: { drag:{ x:true, y:false } }
   }, data, holder));
@@ -713,7 +731,7 @@ function addChart(item, stamps, container) {
 function resizeCharts() {
   charts.forEach(chart => {
     const holder = chart.root.parentElement;
-    if (holder && holder.offsetParent !== null) chart.setSize({ width: Math.max(280, holder.clientWidth), height: chart.height });
+    if (holder && holder.offsetParent !== null) chart.setSize({ width: Math.max(200, holder.clientWidth), height: chart.height });
   });
 }
 window.addEventListener('resize', resizeCharts);
@@ -944,10 +962,9 @@ function renderScatter(section) {
       for (let j = 0; j < yEdges.length - 1; j++) {
         const value = matrix[i][j];
         const td = node('td', '', value > 0 ? (value >= 10 ? value.toFixed(0) : value.toFixed(1)) : '');
-        // Heat comes from the chart colour token so it reads in both themes; the strongest cells
-        // flip to the surface colour for contrast.
-        if (value > 0) td.style.background = `color-mix(in srgb, var(--chart-line) ${Math.round(10 + 78 * value / peak)}%, transparent)`;
-        if (value > 0.55 * peak) td.style.color = 'var(--surface)';
+        // Heat comes from the chart colour token so it reads in both themes; fill is capped
+        // so normal text colour meets contrast in both themes.
+        if (value > 0) td.style.background = `color-mix(in srgb, var(--chart-line) ${Math.round(42 * value / peak)}%, transparent)`;
         tr.append(td);
       }
       table.append(tr);
