@@ -45,13 +45,25 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.browser)
 
 
+def retrying(action, seconds=10):
+    """Run `action`, retrying while Windows still has a data file locked by a request of the previous test."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            return action()
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+
+
 @pytest.fixture
 def live(monkeypatch):
     """The app on a free port with three finished jobs: A (96 h) and B (48 h) single-levels, and a spectra job."""
     appmodule.jobs.clear()
-    make_job(JOB_A, "single-levels", lambda f: varied_wave_dataset(96).to_netcdf(f / "era5_2022-01.nc"))
-    make_job(JOB_B, "single-levels", lambda f: varied_wave_dataset(48).to_netcdf(f / "era5_2022-01.nc"))
-    make_job(JOB_SPECTRA, "wave-spectra", build_b)
+    retrying(lambda: make_job(JOB_A, "single-levels", lambda f: varied_wave_dataset(96).to_netcdf(f / "era5_2022-01.nc")))
+    retrying(lambda: make_job(JOB_B, "single-levels", lambda f: varied_wave_dataset(48).to_netcdf(f / "era5_2022-01.nc")))
+    retrying(lambda: make_job(JOB_SPECTRA, "wave-spectra", build_b))
     monkeypatch.setattr(appmodule.executor, "submit", lambda fn, *args: None)
     server = make_server("127.0.0.1", 0, appmodule.app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -76,7 +88,7 @@ def browser():
 
 
 @pytest.fixture
-def new_page(browser):
+def new_page(browser, live):          # depends on `live` so its pages are closed before the server stops
     """A factory: new_page(width=1280, height=900, **context_options) -> page with .errors (uncaught JS errors)."""
     contexts = []
 

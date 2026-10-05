@@ -1299,17 +1299,21 @@ resumeButton.addEventListener('click', async () => {
 
 // --- submit -----------------------------------------------------------------------
 
+// The server requires JSON numbers for these fields (a number sent as text is a 400); an input gives text.
+// Text that is not a number is sent as it is, so the server can say "<field> must be a number".
+const asNumber = text => (text.trim() !== '' && Number.isFinite(Number(text)) ? Number(text) : text);
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   showError('');
   setSubmitting(true);
   const product = productSelect.value;
   const payload = {
-    product, time_step: $('#time-step').value, expver: $('#expver').value,
+    product, time_step: asNumber($('#time-step').value), expver: $('#expver').value,
     groups: checkedValues('groups'), params: checkedValues('params'),
-    latitude: latInput.value, longitude: lonInput.value,
+    latitude: asNumber(latInput.value), longitude: asNumber(lonInput.value),
     start: $('#start').value, end: $('#end').value,
-    buffer: $('#buffer').value, dry_run: $('#dry-run').checked
+    buffer: asNumber($('#buffer').value), dry_run: $('#dry-run').checked
   };
   if (event.submitter === probeButton) Object.assign(payload, { probe: true, dry_run: false });
   const missing = product === 'single-levels' && !payload.groups.length ? 'Choose at least one variable group'
