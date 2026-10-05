@@ -3,6 +3,22 @@
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org/); while the
 major version is 0, minor versions may change behaviour and numbers.
 
+## [0.1.1] - 2026-10-05
+
+Patch release. If you are on 0.1.0, update: it cannot start a download from the page.
+
+### Fixed
+- **Fetch ERA5 data failed with "latitude must be a number".** The request form sent its latitude, longitude,
+  buffer and time step as text. The stricter request check added in 0.1.0 accepts only numbers, so every submit from
+  the page was refused and no download could be started. The page now sends numbers. A request sent straight to
+  the API with numbers was never affected.
+- A Windows-only flake in the browser-test fixtures that made a full test run fail intermittently in setup.
+
+### Changed
+- Five new browser tests submit the real form (all three data products and a preview request). The earlier tests
+  posted to the API directly and never pressed the button, which is why the bug was not caught. The suite is now
+  725 tests, 75 of them in a browser.
+
 ## [0.1.0] - 2026-10-04
 
 First tagged release. It is a screening aid, not a resource assessment: the numerics are tested on synthetic data

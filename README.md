@@ -11,7 +11,7 @@ Two data routes are kept strictly separate. **Option A** uses ERA5 single-level 
 A cross-check panel compares them but never merges them. The basemap is OpenFreeMap (OpenStreetMap data)
 and needs no account or token.
 
-> **Status.** The numerics are tested on synthetic data with known answers (720 tests, including 70 that drive the page in headless Chromium; `python -m pytest -q`, run on every push by GitHub Actions).
+> **Status.** The numerics are tested on synthetic data with known answers (725 tests, including 75 that drive the page in headless Chromium; `python -m pytest -q`, run on every push by GitHub Actions).
 > Option A has completed real CDS downloads (2025 single levels, under one year; the screenshots below come
 > from one). Option B has no completed job: five were refused by CDS as too large, one was cancelled, and
 > one 6-hourly July 2026 job downloaded its 16 files but was marked failed by an app restart. Option A and
@@ -383,7 +383,7 @@ pandas 2.2.3, scipy 1.14.1, xarray 2025.1, netCDF4 1.7.2, Flask 3.0, cdsapi 0.7.
 too. The workflow passed on the pull request that added it (four jobs: Ubuntu and Windows, Python 3.12
 and 3.13).
 
-The 70 browser tests in `tests/frontend/` drive the real page in Chromium through Playwright. They need
+The 75 browser tests in `tests/frontend/` drive the real page in Chromium through Playwright. They need
 `python -m playwright install chromium` and load MapLibre and uPlot from unpkg.com (the basemap is stubbed),
 and they skip when Chromium or those libraries are not available. A separate CI job installs Chromium and
 fails instead of skipping.
